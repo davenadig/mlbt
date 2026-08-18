@@ -148,6 +148,9 @@ fn draw_tabs(f: &mut Frame, top_bar: Rect, app: &App) {
 }
 
 type KeyHint = (&'static str, &'static str);
+const KEY_HINT_BG: Color = Color::Rgb(24, 24, 27);
+const KEY_HINT_KEY: Color = Color::Rgb(250, 204, 21);
+const KEY_HINT_TEXT: Color = Color::Rgb(250, 250, 250);
 
 fn context_key_hints(active_tab: MenuItem) -> &'static [KeyHint] {
     match active_tab {
@@ -198,18 +201,18 @@ fn hint_spans(hints: &[KeyHint]) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (index, (key, label)) in hints.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled("  ", Style::default().bg(Color::DarkGray)));
+            spans.push(Span::styled("  ", Style::default().bg(KEY_HINT_BG)));
         }
         spans.push(Span::styled(
             *key,
             Style::default()
-                .fg(Color::Cyan)
-                .bg(Color::DarkGray)
+                .fg(KEY_HINT_KEY)
+                .bg(KEY_HINT_BG)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             format!(" {label}"),
-            Style::default().fg(Color::White).bg(Color::DarkGray),
+            Style::default().fg(KEY_HINT_TEXT).bg(KEY_HINT_BG),
         ));
     }
     spans
@@ -228,14 +231,14 @@ fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
             .areas(area);
 
     f.render_widget(
-        Block::default().style(Style::default().bg(Color::DarkGray)),
+        Block::default().style(Style::default().bg(KEY_HINT_BG)),
         area,
     );
     f.render_widget(
         Paragraph::new(Line::from(hint_spans(context_key_hints(
             app.state.active_tab,
         ))))
-        .style(Style::default().bg(Color::DarkGray)),
+        .style(Style::default().bg(KEY_HINT_BG)),
         context_area,
     );
     f.render_widget(
@@ -243,7 +246,7 @@ fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
             app.state.active_tab,
         ))))
         .alignment(Alignment::Right)
-        .style(Style::default().bg(Color::DarkGray)),
+        .style(Style::default().bg(KEY_HINT_BG)),
         global_area,
     );
 }

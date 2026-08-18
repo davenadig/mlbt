@@ -19,6 +19,8 @@ use std::{io, panic};
 use tokio::sync::{Mutex, mpsc};
 use tui::{Terminal, backend::CrosstermBackend};
 
+const PREFERRED_TERMINAL_WIDTH: u16 = 120;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| matches!(a.as_str(), "--version" | "-V")) {
@@ -27,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     better_panic::install();
+    ensure_preferred_terminal_width();
 
     let backend = CrosstermBackend::new(io::stdout());
     let terminal = Terminal::new(backend)?;
@@ -66,6 +69,21 @@ async fn main() -> anyhow::Result<()> {
     periodic_task.abort();
 
     Ok(())
+}
+
+fn preferred_terminal_size(width: u16, height: u16) -> Option<(u16, u16)> {
+    (width < PREFERRED_TERMINAL_WIDTH).then_some((PREFERRED_TERMINAL_WIDTH, height))
+}
+
+fn ensure_preferred_terminal_width() {
+    let Ok((width, height)) = terminal::size() else {
+        return;
+    };
+    let Some((width, height)) = preferred_terminal_size(width, height) else {
+        return;
+    };
+
+    let _ = execute!(io::stdout(), terminal::SetSize(width, height));
 }
 
 async fn main_ui_loop(
@@ -244,4 +262,20 @@ fn setup_panic_hook() {
         cleanup_terminal();
         better_panic::Settings::auto().create_panic_handler()(panic_info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_narrow_terminals_to_preferred_width() {
+        assert_eq!(preferred_terminal_size(99, 30), Some((120, 30)));
+    }
+
+    #[test]
+    fn leaves_preferred_and_wider_terminals_alone() {
+        assert_eq!(preferred_terminal_size(120, 30), None);
+        assert_eq!(preferred_terminal_size(160, 40), None);
+    }
 }
