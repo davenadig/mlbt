@@ -9,7 +9,7 @@ pub struct LayoutAreas {
 }
 
 const TOP_BAR_HEIGHT: u16 = 3; // length
-const FOOTER_HEIGHT: u16 = 1;
+const FOOTER_HEIGHT: u16 = 2;
 
 impl LayoutAreas {
     pub fn new(size: Size) -> Self {
@@ -125,8 +125,8 @@ mod tests {
         areas.update(Rect::new(0, 0, 100, 30), false);
 
         assert_eq!(areas.top_bar, Rect::new(0, 0, 100, 3));
-        assert_eq!(areas.main, Rect::new(0, 3, 100, 26));
-        assert_eq!(areas.footer, Rect::new(0, 29, 100, 1));
+        assert_eq!(areas.main, Rect::new(0, 3, 100, 25));
+        assert_eq!(areas.footer, Rect::new(0, 28, 100, 2));
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
         areas.update(Rect::new(0, 0, 80, 24), true);
 
         assert_eq!(areas.top_bar.height, 0);
-        assert_eq!(areas.main, Rect::new(0, 0, 80, 23));
-        assert_eq!(areas.footer, Rect::new(0, 23, 80, 1));
+        assert_eq!(areas.main, Rect::new(0, 0, 80, 22));
+        assert_eq!(areas.footer, Rect::new(0, 22, 80, 2));
     }
 }
