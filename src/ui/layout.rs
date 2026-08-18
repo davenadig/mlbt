@@ -3,45 +3,50 @@ use crate::ui::input_popup;
 use tui::layout::{Constraint, Layout, Rect, Size};
 
 pub struct LayoutAreas {
-    pub top_bar: [Rect; 2],
+    pub top_bar: Rect,
     pub main: Rect,
+    pub footer: Rect,
 }
 
 const TOP_BAR_HEIGHT: u16 = 3; // length
-const MAIN_HEIGHT: u16 = 100; // percent
+const FOOTER_HEIGHT: u16 = 1;
 
 impl LayoutAreas {
     pub fn new(size: Size) -> Self {
         let rect = Rect::new(0, 0, size.width, size.height);
-        let [top, main] = Layout::vertical([
+        let [top, main, footer] = Layout::vertical([
             Constraint::Length(TOP_BAR_HEIGHT),
-            Constraint::Percentage(MAIN_HEIGHT),
+            Constraint::Fill(1),
+            Constraint::Length(FOOTER_HEIGHT),
         ])
         .margin(1)
         .areas(rect);
 
         LayoutAreas {
-            top_bar: LayoutAreas::create_top_bar(top),
+            top_bar: top,
             main,
+            footer,
         }
     }
 
     pub(crate) fn update(&mut self, size: Rect, full_screen: bool) {
         let constraints = match full_screen {
-            true => vec![Constraint::Percentage(0), Constraint::Percentage(100)],
+            true => vec![
+                Constraint::Length(0),
+                Constraint::Fill(1),
+                Constraint::Length(FOOTER_HEIGHT),
+            ],
             false => vec![
                 Constraint::Length(TOP_BAR_HEIGHT),
-                Constraint::Percentage(MAIN_HEIGHT),
+                Constraint::Fill(1),
+                Constraint::Length(FOOTER_HEIGHT),
             ],
         };
-        let [top, main] = Layout::vertical(constraints).areas(size);
+        let [top, main, footer] = Layout::vertical(constraints).areas(size);
 
-        self.top_bar = LayoutAreas::create_top_bar(top);
+        self.top_bar = top;
         self.main = main;
-    }
-
-    pub fn create_top_bar(area: Rect) -> [Rect; 2] {
-        Layout::horizontal([Constraint::Percentage(90), Constraint::Percentage(10)]).areas(area)
+        self.footer = footer;
     }
 
     /// Create splits for displaying the line score on top and a box score below.
@@ -106,5 +111,32 @@ impl LayoutAreas {
     /// Create a centered rectangle of 4 height and 42% width for the date picker.
     pub fn create_date_picker(area: Rect) -> Rect {
         input_popup::create_popup(area, 4, 42)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reserves_the_last_row_for_key_hints() {
+        let size = Size::new(100, 30);
+        let mut areas = LayoutAreas::new(size);
+        areas.update(Rect::new(0, 0, 100, 30), false);
+
+        assert_eq!(areas.top_bar, Rect::new(0, 0, 100, 3));
+        assert_eq!(areas.main, Rect::new(0, 3, 100, 26));
+        assert_eq!(areas.footer, Rect::new(0, 29, 100, 1));
+    }
+
+    #[test]
+    fn full_screen_hides_tabs_but_keeps_key_hints() {
+        let size = Size::new(80, 24);
+        let mut areas = LayoutAreas::new(size);
+        areas.update(Rect::new(0, 0, 80, 24), true);
+
+        assert_eq!(areas.top_bar.height, 0);
+        assert_eq!(areas.main, Rect::new(0, 0, 80, 23));
+        assert_eq!(areas.footer, Rect::new(0, 23, 80, 1));
     }
 }

@@ -1,7 +1,7 @@
 use tui::backend::Backend;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Modifier, Style};
-use tui::text::Line;
+use tui::text::{Line, Span};
 use tui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Widget};
 use tui::{Frame, Terminal};
 
@@ -44,7 +44,7 @@ where
             main_layout.update(f.area(), app.settings.full_screen);
 
             if !app.settings.full_screen {
-                draw_tabs(f, &main_layout.top_bar, app);
+                draw_tabs(f, main_layout.top_bar, app);
             }
 
             match app.state.active_tab {
@@ -61,7 +61,16 @@ where
                 MenuItem::Gameday => draw_gameday(f, main_layout.main, app),
                 MenuItem::Stats => draw_stats(f, main_layout.main, app),
                 MenuItem::Standings => draw_standings(f, main_layout.main, app),
-                MenuItem::Help => draw_help(f, f.area(), app),
+                MenuItem::Help => {
+                    let area = f.area();
+                    let help_area = Rect::new(
+                        area.x,
+                        area.y,
+                        area.width,
+                        area.height.saturating_sub(main_layout.footer.height),
+                    );
+                    draw_help(f, help_area, app);
+                }
             }
             if app.state.debug_state == DebugState::On {
                 let mut dbi = DebugInfo::new();
@@ -70,6 +79,7 @@ where
             }
 
             draw_loading_spinner(f, f.area(), app, is_loading);
+            draw_key_hints(f, main_layout.footer, app);
         })
         .unwrap();
 }
@@ -115,7 +125,7 @@ fn draw_loading_spinner(f: &mut Frame, area: Rect, app: &App, loading: LoadingSt
     f.render_widget(spinner, area);
 }
 
-fn draw_tabs(f: &mut Frame, top_bar: &[Rect], app: &App) {
+fn draw_tabs(f: &mut Frame, top_bar: Rect, app: &App) {
     let border_style = border_style();
     let border_type = BorderType::Rounded;
 
@@ -124,7 +134,7 @@ fn draw_tabs(f: &mut Frame, top_bar: &[Rect], app: &App) {
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
-                .borders(Borders::LEFT | Borders::BOTTOM | Borders::TOP)
+                .borders(Borders::ALL)
                 .border_type(border_type)
                 .border_style(border_style),
         )
@@ -134,18 +144,108 @@ fn draw_tabs(f: &mut Frame, top_bar: &[Rect], app: &App) {
         )
         .select(app.state.active_tab as usize)
         .style(TEXT_COLOR);
-    f.render_widget(tabs, top_bar[0]);
+    f.render_widget(tabs, top_bar);
+}
 
-    let help = Paragraph::new("Help: ? ")
+type KeyHint = (&'static str, &'static str);
+
+fn context_key_hints(active_tab: MenuItem) -> &'static [KeyHint] {
+    match active_tab {
+        MenuItem::Scoreboard => &[
+            ("j/k", "game"),
+            ("a/h", "lineup"),
+            ("Enter", "gameday"),
+            (":", "date"),
+            ("w", "win%"),
+            ("s", "sort"),
+        ],
+        MenuItem::Gameday => &[
+            ("j/k", "at-bat"),
+            ("l", "live"),
+            ("i", "info"),
+            ("p", "pitches"),
+            ("b", "box"),
+            ("a/h", "lineup"),
+        ],
+        MenuItem::Stats => &[
+            ("j/k", "move"),
+            ("Tab", "pane"),
+            ("p/h", "pitch/hit"),
+            ("o", "options"),
+            ("^f", "search"),
+            (":", "date"),
+        ],
+        MenuItem::Standings => &[
+            ("j/k", "team"),
+            ("Enter", "open"),
+            ("l", "league"),
+            (":", "date"),
+        ],
+        MenuItem::DatePicker => &[("←/→", "date"), ("Enter", "apply")],
+        MenuItem::Help => &[("j/k", "scroll"), ("Tab", "settings"), ("Enter", "change")],
+    }
+}
+
+fn global_key_hints(active_tab: MenuItem) -> &'static [KeyHint] {
+    match active_tab {
+        MenuItem::DatePicker => &[("Esc", "cancel"), ("q", "quit")],
+        MenuItem::Help => &[("Esc", "close"), ("q", "quit")],
+        _ => &[("?", "help"), ("q", "quit")],
+    }
+}
+
+fn hint_spans(hints: &[KeyHint]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, (key, label)) in hints.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", Style::default().bg(Color::DarkGray)));
+        }
+        spans.push(Span::styled(
+            *key,
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            Style::default().fg(Color::White).bg(Color::DarkGray),
+        ));
+    }
+    spans
+}
+
+fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
+    let global_width = global_key_hints(app.state.active_tab)
+        .iter()
+        .map(|(key, label)| key.chars().count() + label.chars().count() + 1)
+        .sum::<usize>()
+        + 2 * global_key_hints(app.state.active_tab)
+            .len()
+            .saturating_sub(1);
+    let [context_area, global_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(global_width as u16)])
+            .areas(area);
+
+    f.render_widget(
+        Block::default().style(Style::default().bg(Color::DarkGray)),
+        area,
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(hint_spans(context_key_hints(
+            app.state.active_tab,
+        ))))
+        .style(Style::default().bg(Color::DarkGray)),
+        context_area,
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(hint_spans(global_key_hints(
+            app.state.active_tab,
+        ))))
         .alignment(Alignment::Right)
-        .block(
-            Block::default()
-                .borders(Borders::RIGHT | Borders::BOTTOM | Borders::TOP)
-                .border_type(border_type)
-                .border_style(border_style),
-        )
-        .style(TEXT_COLOR);
-    f.render_widget(help, top_bar[1]);
+        .style(Style::default().bg(Color::DarkGray)),
+        global_area,
+    );
 }
 
 fn draw_scoreboard(f: &mut Frame, rect: Rect, app: &mut App) {
@@ -352,4 +452,34 @@ fn draw_help(f: &mut Frame, rect: Rect, app: &mut App) {
         rect,
         &mut app.state.help.state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoreboard_footer_surfaces_lineup_controls() {
+        let hints = context_key_hints(MenuItem::Scoreboard);
+        assert!(hints.contains(&("a/h", "lineup")));
+        assert!(hints.contains(&("Enter", "gameday")));
+    }
+
+    #[test]
+    fn every_view_keeps_quit_visible() {
+        for tab in [
+            MenuItem::Scoreboard,
+            MenuItem::Gameday,
+            MenuItem::Stats,
+            MenuItem::Standings,
+            MenuItem::DatePicker,
+            MenuItem::Help,
+        ] {
+            let hints = global_key_hints(tab);
+            assert!(hints.contains(&("q", "quit")));
+            if tab != MenuItem::Help && tab != MenuItem::DatePicker {
+                assert!(hints.contains(&("?", "help")));
+            }
+        }
+    }
 }
