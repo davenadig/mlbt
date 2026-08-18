@@ -41,6 +41,14 @@ impl Widget for AtBatWidget<'_> {
         let height = strike_zone_top - strike_zone_bot;
         let coords = StrikeZone::build_coords(strike_zone_bot, strike_zone_top);
         let strike_zone_area = generate_strike_zone_area(kzone);
+        let pitch_locations = pitches.pitches.pitch_events.iter().filter_map(|event| {
+            event.pitch.as_ref().map(|pitch| {
+                let marker = pitch.as_rectangle();
+                (marker.x, marker.y)
+            })
+        });
+        let (x_bounds, y_bounds) =
+            strike_zone_canvas_bounds(strike_zone_bot, strike_zone_top, pitch_locations);
 
         // strike zone and pitch display
         Canvas::default()
@@ -69,8 +77,8 @@ impl Widget for AtBatWidget<'_> {
                     }
                 }
             })
-            .x_bounds([-25.0, 25.0])
-            .y_bounds([0.0, 55.0])
+            .x_bounds(x_bounds)
+            .y_bounds(y_bounds)
             .render(strike_zone_area, buf);
 
         // display the event information
@@ -109,6 +117,34 @@ impl Widget for AtBatWidget<'_> {
     }
 }
 
+fn strike_zone_canvas_bounds(
+    strike_zone_bot: f64,
+    strike_zone_top: f64,
+    pitch_locations: impl IntoIterator<Item = (f64, f64)>,
+) -> ([f64; 2], [f64; 2]) {
+    const HORIZONTAL_MARGIN: f64 = 6.0;
+    const VERTICAL_MARGIN: f64 = 8.0;
+    const PITCH_MARKER_MARGIN: f64 = 2.0;
+
+    let mut x_bounds = [
+        -(HOME_PLATE_WIDTH / 2.0) - HORIZONTAL_MARGIN,
+        HOME_PLATE_WIDTH / 2.0 + HORIZONTAL_MARGIN,
+    ];
+    let mut y_bounds = [
+        strike_zone_bot - VERTICAL_MARGIN,
+        strike_zone_top + VERTICAL_MARGIN,
+    ];
+
+    for (x, y) in pitch_locations {
+        x_bounds[0] = x_bounds[0].min(x - PITCH_MARKER_MARGIN);
+        x_bounds[1] = x_bounds[1].max(x + PITCH_MARKER_MARGIN);
+        y_bounds[0] = y_bounds[0].min(y - PITCH_MARKER_MARGIN);
+        y_bounds[1] = y_bounds[1].max(y + PITCH_MARKER_MARGIN);
+    }
+
+    (x_bounds, y_bounds)
+}
+
 fn generate_strike_zone_area(area: Rect) -> Rect {
     // kind of arbitrary values to make the zone look good
     const STRIKE_ZONE_WIDTH: u16 = 35;
@@ -140,4 +176,25 @@ fn generate_strike_zone_area(area: Rect) -> Rect {
         final_width,
         final_height,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strike_zone_bounds_keep_a_compact_visible_margin() {
+        let (x, y) = strike_zone_canvas_bounds(18.0, 39.6, []);
+
+        assert_eq!(x, [-14.5, 14.5]);
+        assert_eq!(y, [10.0, 47.6]);
+    }
+
+    #[test]
+    fn strike_zone_bounds_expand_for_wild_pitches() {
+        let (x, y) = strike_zone_canvas_bounds(18.0, 39.6, [(-20.0, 50.0)]);
+
+        assert_eq!(x, [-22.0, 14.5]);
+        assert_eq!(y, [10.0, 52.0]);
+    }
 }
