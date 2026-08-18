@@ -161,6 +161,7 @@ fn context_key_hints(active_tab: MenuItem) -> &'static [KeyHint] {
             (":", "date"),
             ("w", "win%"),
             ("s", "sort"),
+            ("c", "card"),
         ],
         MenuItem::Gameday => &[
             ("j/k", "at-bat"),
@@ -169,6 +170,7 @@ fn context_key_hints(active_tab: MenuItem) -> &'static [KeyHint] {
             ("p", "pitches"),
             ("b", "box"),
             ("a/h", "lineup"),
+            ("c", "card"),
         ],
         MenuItem::Stats => &[
             ("j/k", "move"),
@@ -466,6 +468,7 @@ mod tests {
         let hints = context_key_hints(MenuItem::Scoreboard);
         assert!(hints.contains(&("a/h", "lineup")));
         assert!(hints.contains(&("Enter", "gameday")));
+        assert!(hints.contains(&("c", "card")));
     }
 
     #[test]

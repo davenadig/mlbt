@@ -6,7 +6,10 @@ use crate::state::settings_editor::SettingsFocus;
 use crate::state::stats::ActivePane;
 use crossterm::event::KeyCode::Char;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use log::error;
 use mlbt_api::client::{Qualification, StatGroup};
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard, mpsc};
 
@@ -118,9 +121,23 @@ pub async fn handle_key_bindings(
             guard.state.schedule.toggle_sort_mode(favorite_team);
             load_game_data(guard, network_requests, false).await;
         }
+        (MenuItem::Scoreboard, Char('c'), _) => {
+            let game_id = guard.state.schedule.get_selected_game_opt();
+            drop(guard);
+            if let Some(game_id) = game_id {
+                launch_scorecard(game_id);
+            }
+        }
         (MenuItem::Scoreboard, KeyCode::Enter, _) => {
             guard.update_tab(MenuItem::Gameday);
             load_game_data(guard, network_requests, false).await;
+        }
+        (MenuItem::Gameday, Char('c'), _) => {
+            let game_id = guard.state.gameday.current_game_id();
+            drop(guard);
+            if game_id > 0 {
+                launch_scorecard(game_id);
+            }
         }
 
         (MenuItem::DatePicker, KeyCode::Enter, _) => {
@@ -234,6 +251,29 @@ pub async fn handle_key_bindings(
         }
 
         _ => handle_global_key(key_event, guard, network_requests).await,
+    }
+}
+
+fn scorecard_command(home: &Path, game_id: u64) -> Command {
+    let mut command = Command::new(home.join(".bun/bin/bun"));
+    command
+        .arg(home.join("GitHub/cogspace/personal/baseball/mlb-client.mjs"))
+        .arg("--game-pk")
+        .arg(game_id.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+fn launch_scorecard(game_id: u64) {
+    let Some(home) = std::env::var_os("HOME") else {
+        error!("cannot launch scorecard: HOME is not set");
+        return;
+    };
+
+    if let Err(err) = scorecard_command(Path::new(&home), game_id).spawn() {
+        error!("cannot launch scorecard for game {game_id}: {err}");
     }
 }
 
@@ -561,4 +601,24 @@ fn handle_help_key(key_event: KeyEvent, guard: &mut AppGuard<'_>) -> (bool, bool
         },
     };
     (handled, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scorecard_command_targets_selected_game() {
+        let command = scorecard_command(Path::new("/Users/test"), 824725);
+
+        assert_eq!(command.get_program(), "/Users/test/.bun/bin/bun");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "/Users/test/GitHub/cogspace/personal/baseball/mlb-client.mjs",
+                "--game-pk",
+                "824725",
+            ]
+        );
+    }
 }

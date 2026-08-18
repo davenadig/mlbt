@@ -14,6 +14,7 @@ use crossterm::event::{self as crossterm_event, Event, KeyEventKind};
 use crossterm::{cursor, execute, terminal};
 use log::error;
 use std::io::Stdout;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::{io, panic};
 use tokio::sync::{Mutex, mpsc};
@@ -75,6 +76,36 @@ fn preferred_terminal_size(width: u16, height: u16) -> Option<(u16, u16)> {
     (width < PREFERRED_TERMINAL_WIDTH).then_some((PREFERRED_TERMINAL_WIDTH, height))
 }
 
+fn iterm_session_unique_id(session_id: &str) -> Option<&str> {
+    let (_, unique_id) = session_id.rsplit_once(':')?;
+    (!unique_id.is_empty()
+        && unique_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'))
+    .then_some(unique_id)
+}
+
+fn resize_iterm_session(width: u16) -> bool {
+    let Ok(session_id) = std::env::var("ITERM_SESSION_ID") else {
+        return false;
+    };
+    let Some(unique_id) = iterm_session_unique_id(&session_id) else {
+        return false;
+    };
+    let script = format!(
+        "tell application \"iTerm2\" to repeat with w in windows\nrepeat with t in tabs of w\nrepeat with s in sessions of t\nif unique ID of s is \"{unique_id}\" then\nset columns of s to {width}\nreturn\nend if\nend repeat\nend repeat\nend repeat"
+    );
+
+    Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 fn ensure_preferred_terminal_width() {
     let Ok((width, height)) = terminal::size() else {
         return;
@@ -83,6 +114,9 @@ fn ensure_preferred_terminal_width() {
         return;
     };
 
+    if resize_iterm_session(width) {
+        return;
+    }
     let _ = execute!(io::stdout(), terminal::SetSize(width, height));
 }
 
@@ -277,5 +311,15 @@ mod tests {
     fn leaves_preferred_and_wider_terminals_alone() {
         assert_eq!(preferred_terminal_size(120, 30), None);
         assert_eq!(preferred_terminal_size(160, 40), None);
+    }
+
+    #[test]
+    fn extracts_and_validates_iterm_session_id() {
+        assert_eq!(
+            iterm_session_unique_id("w0t0p0:75824422-569B-4BEF-B656-08141AD401DF"),
+            Some("75824422-569B-4BEF-B656-08141AD401DF")
+        );
+        assert_eq!(iterm_session_unique_id("not-an-iterm-session"), None);
+        assert_eq!(iterm_session_unique_id("w0:bad-id!'"), None);
     }
 }
