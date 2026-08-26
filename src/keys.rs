@@ -260,6 +260,10 @@ fn scorecard_command(home: &Path, game_id: u64) -> Command {
         .arg(home.join("GitHub/cogspace/personal/baseball/mlb-client.mjs"))
         .arg("--game-pk")
         .arg(game_id.to_string())
+        // Render and open a print-ready PDF rather than the OpenCard editor. At
+        // the ballpark the card wants printing, not editing, and the editor path
+        // costs a vite dev server and a browser tab to get there.
+        .arg("--pdf")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -618,6 +622,7 @@ mod tests {
                 "/Users/test/GitHub/cogspace/personal/baseball/mlb-client.mjs",
                 "--game-pk",
                 "824725",
+                "--pdf",
             ]
         );
     }
