@@ -220,6 +220,11 @@ pub async fn handle_key_bindings(
         (MenuItem::Standings, KeyCode::Enter, _) => load_team(guard, network_requests).await,
         (MenuItem::Standings, Char(':'), _) => guard.update_tab(MenuItem::DatePicker),
 
+        // Broadcast delay. Bound on both live-game screens because the delay gets
+        // set while a game is on, when opening the help page to reach the settings
+        // form is exactly the wrong thing to have to do.
+        (MenuItem::Scoreboard | MenuItem::Gameday, Char('t'), _) => guard.cycle_tv_delay(),
+
         (MenuItem::Gameday, Char('i'), _) => guard.state.gameday.toggle_info(),
         (MenuItem::Gameday, Char('p'), _) => guard.state.gameday.toggle_at_bat(),
         (MenuItem::Gameday, Char('b'), _) => guard.state.gameday.toggle_boxscore(),

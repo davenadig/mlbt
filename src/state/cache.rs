@@ -364,6 +364,7 @@ mod tests {
         NetworkResponse::GameDataLoaded {
             game: Arc::new(LiveResponse::default()),
             win_probability: Arc::new(WinProbabilityResponse::default()),
+            fetched_at: Instant::now(),
         }
     }
 

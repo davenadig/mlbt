@@ -3,6 +3,7 @@ pub mod app_state;
 pub mod boxscore;
 pub mod cache;
 pub mod date_input;
+pub mod delay;
 pub mod gameday;
 pub mod help;
 pub mod messages;

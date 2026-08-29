@@ -22,6 +22,11 @@ use tui::{Terminal, backend::CrosstermBackend};
 
 const PREFERRED_TERMINAL_WIDTH: u16 = 120;
 
+/// How often held live snapshots are checked for release. Bounds how far past its
+/// configured delay a snapshot can sit, so the shortest offered delay (5s) is still
+/// accurate to within about 10%.
+const DELAY_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| matches!(a.as_str(), "--version" | "-V")) {
@@ -128,6 +133,7 @@ async fn main_ui_loop(
     mut network_responses: mpsc::Receiver<NetworkResponse>,
 ) {
     let mut loading = LoadingState::default();
+    let mut delay_release = tokio::time::interval(DELAY_RELEASE_INTERVAL);
 
     loop {
         tokio::select! {
@@ -143,6 +149,19 @@ async fn main_ui_loop(
                 let should_redraw = handle_network_response(response, &app, &network_requests, &mut loading).await;
                 if should_redraw {
                     let mut app_guard = app.lock().await;
+                    draw::draw(&mut terminal, &mut app_guard, loading);
+                }
+            }
+
+            // A snapshot held by the broadcast-delay buffer comes due on the clock,
+            // not on an event, so nothing else would wake the loop to display it.
+            _ = delay_release.tick() => {
+                let mut app_guard = app.lock().await;
+                let released = app_guard.release_due_live_data();
+                // While the buffer is cold the ui shows a countdown, so it needs to
+                // redraw as that ticks down. That state is transient by definition.
+                let counting_down = app_guard.tv_delay_status().is_some_and(|(_, c)| c.is_some());
+                if (released || counting_down) && !loading.is_loading {
                     draw::draw(&mut terminal, &mut app_guard, loading);
                 }
             }
@@ -197,9 +216,15 @@ async fn handle_network_response(
         NetworkResponse::GameDataLoaded {
             game,
             win_probability,
+            fetched_at,
         } => {
             let mut guard = app.lock().await;
-            guard.update_live_data(&game, &win_probability);
+            // With a broadcast delay set this holds the snapshot instead of applying
+            // it; `DELAY_RELEASE_INTERVAL` below is what puts it on screen later.
+            let applied = guard.queue_live_data(game, win_probability, fetched_at);
+            if !applied {
+                return false;
+            }
         }
         NetworkResponse::StandingsLoaded { standings } => {
             let mut guard = app.lock().await;

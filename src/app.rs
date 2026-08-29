@@ -1,8 +1,9 @@
 use crate::config::TomlFileStore;
 use crate::state::app_settings::AppSettings;
 use crate::state::app_state::AppState;
+use crate::state::delay::Accepted;
 use crate::state::messages::NetworkRequest;
-use crate::state::settings_editor::SettingsStatus;
+use crate::state::settings_editor::{SettingsStatus, next_tv_delay, tv_delay_label};
 use chrono::{NaiveDate, ParseError, Utc};
 use log::{error, info};
 use mlbt_api::live::LiveResponse;
@@ -12,6 +13,7 @@ use mlbt_api::season::GameType;
 use mlbt_api::team::{RosterResponse, RosterType, TransactionsResponse};
 use mlbt_api::win_probability::WinProbabilityResponse;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum MenuItem {
@@ -215,6 +217,78 @@ impl App {
             if self.state.active_tab == MenuItem::Scoreboard {
                 self.state.box_score.reset_scroll();
             }
+        }
+    }
+
+    /// Route a freshly fetched live snapshot through the broadcast-delay buffer.
+    ///
+    /// Returns whether anything was applied to the display. With the delay off this
+    /// is the old behaviour — apply immediately; with it on the snapshot is held and
+    /// [`release_due_live_data`] applies it once it has aged past the delay.
+    ///
+    /// Snapshots for a game other than the selected one are dropped here rather than
+    /// buffered. `update_live_data` would discard them anyway, and buffering them
+    /// would flush the selected game's queue on the way through.
+    ///
+    /// [`release_due_live_data`]: App::release_due_live_data
+    pub fn queue_live_data(
+        &mut self,
+        game: Arc<LiveResponse>,
+        win_probability: Arc<WinProbabilityResponse>,
+        fetched_at: Instant,
+    ) -> bool {
+        if Some(game.game_pk) != self.state.schedule.get_selected_game_opt() {
+            return false;
+        }
+
+        let delay = self.settings.tv_delay();
+        match self
+            .state
+            .delay
+            .accept(game, win_probability, fetched_at, delay)
+        {
+            Accepted::Now(game, win_probability) => {
+                self.update_live_data(&game, &win_probability);
+                true
+            }
+            Accepted::Held => false,
+        }
+    }
+
+    /// Apply any held snapshot that has aged past the delay. Returns whether the
+    /// display changed. Called on a short timer, since a held snapshot has no event
+    /// of its own to wake the ui loop when it comes due.
+    pub fn release_due_live_data(&mut self) -> bool {
+        let delay = self.settings.tv_delay();
+        let Some((game, win_probability)) = self.state.delay.take_due(delay, Instant::now()) else {
+            return false;
+        };
+        self.update_live_data(&game, &win_probability);
+        true
+    }
+
+    /// How the delay should describe itself in the ui, or `None` when it is off.
+    /// `Some((label, countdown))` where `countdown` is seconds until the next held
+    /// snapshot appears — `None` once the buffer is warm and updates flow steadily.
+    pub fn tv_delay_status(&self) -> Option<(String, Option<u64>)> {
+        if self.settings.tv_delay_seconds == 0 {
+            return None;
+        }
+        let countdown = self
+            .state
+            .delay
+            .seconds_until_release(self.settings.tv_delay(), Instant::now());
+        Some((tv_delay_label(self.settings.tv_delay_seconds), countdown))
+    }
+
+    /// Step the delay to the next offered value, wrapping past 45s back to Off, and
+    /// persist it. This is the `t` key: the delay gets set while a game is on, which
+    /// is exactly when opening the help page to reach the settings form is worst.
+    pub fn cycle_tv_delay(&mut self) {
+        self.settings.tv_delay_seconds = next_tv_delay(self.settings.tv_delay_seconds);
+
+        if let Err(err) = self.store.save(&self.settings) {
+            error!("could not save tv delay: {err}");
         }
     }
 

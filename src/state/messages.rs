@@ -12,6 +12,7 @@ use mlbt_api::stats::StatsResponse;
 use mlbt_api::team::{RosterResponse, RosterType, TransactionsResponse};
 use mlbt_api::win_probability::WinProbabilityResponse;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Debug, Copy, Clone)]
 pub enum NetworkRequest {
@@ -89,6 +90,10 @@ pub enum NetworkResponse {
     GameDataLoaded {
         game: Arc<LiveResponse>,
         win_probability: Arc<WinProbabilityResponse>,
+        /// When this snapshot came back from the API. The broadcast-delay buffer ages
+        /// snapshots from here, not from UI receipt, so one served out of the network
+        /// cache is not held for its full delay a second time.
+        fetched_at: Instant,
     },
     StandingsLoaded {
         standings: Arc<StandingsResponse>,

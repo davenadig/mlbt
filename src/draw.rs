@@ -154,6 +154,10 @@ type KeyHint = (&'static str, &'static str);
 const KEY_HINT_BG: Color = Color::Rgb(24, 24, 27);
 const KEY_HINT_KEY: Color = Color::Rgb(250, 204, 21);
 const KEY_HINT_TEXT: Color = Color::Rgb(250, 250, 250);
+/// Steady delay: the display is trailing the broadcast as asked.
+const DELAY_STEADY: Color = Color::Rgb(74, 222, 128);
+/// Buffer still filling: nothing on screen yet, and the badge says how long for.
+const DELAY_WARMING: Color = Color::Rgb(250, 204, 21);
 
 fn team_page_key_hints(has_player_profile: bool) -> &'static [KeyHint] {
     if has_player_profile {
@@ -186,6 +190,7 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("c", "card"),
             ("w", "win%"),
             ("s", "sort"),
+            ("t", "delay"),
             (":", "date"),
         ],
         MenuItem::Gameday => &[
@@ -200,6 +205,7 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("!", "scoring"),
             ("a/h", "lineup"),
             ("c", "card"),
+            ("t", "delay"),
         ],
         MenuItem::Stats if app.state.stats.search.is_open => &[
             ("type", "query"),
@@ -352,6 +358,27 @@ fn hint_spans(hints: &[KeyHint]) -> Vec<Span<'static>> {
     spans
 }
 
+/// Right-aligned status badge for the broadcast delay, or `None` when it is off.
+///
+/// This has to be visible somewhere permanent: a delayed display is indistinguishable
+/// from a stalled one, and the first thing anyone does with a screen that looks stuck
+/// is restart it. While the buffer is cold the badge also counts down, which is the
+/// only thing explaining an empty Gameday for up to 45 seconds after opening it.
+fn delay_badge_spans(app: &App) -> Option<Vec<Span<'static>>> {
+    let (label, countdown) = app.tv_delay_status()?;
+    let (color, text) = match countdown {
+        Some(seconds) => (DELAY_WARMING, format!("DELAY {label} · {seconds}s")),
+        None => (DELAY_STEADY, format!("DELAY {label}")),
+    };
+    Some(vec![Span::styled(
+        text,
+        Style::default()
+            .fg(color)
+            .bg(KEY_HINT_BG)
+            .add_modifier(Modifier::BOLD),
+    )])
+}
+
 fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
     let [context_area, navigation_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
@@ -368,11 +395,35 @@ fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
         Block::default().style(Style::default().bg(KEY_HINT_BG)),
         area,
     );
+    let badge = delay_badge_spans(app);
+    let (hints_area, badge_area) = match &badge {
+        Some(spans) => {
+            let width = spans
+                .iter()
+                .map(|s| s.content.chars().count())
+                .sum::<usize>()
+                + 1;
+            let [hints, badge_area] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Length(width as u16)])
+                    .areas(context_area);
+            (hints, Some(badge_area))
+        }
+        None => (context_area, None),
+    };
+
     f.render_widget(
         Paragraph::new(Line::from(hint_spans(context_key_hints(app))))
             .style(Style::default().bg(KEY_HINT_BG)),
-        context_area,
+        hints_area,
     );
+    if let (Some(spans), Some(badge_area)) = (badge, badge_area) {
+        f.render_widget(
+            Paragraph::new(Line::from(spans))
+                .alignment(Alignment::Right)
+                .style(Style::default().bg(KEY_HINT_BG)),
+            badge_area,
+        );
+    }
     f.render_widget(
         Paragraph::new(Line::from(hint_spans(navigation_key_hints(app))))
             .style(Style::default().bg(KEY_HINT_BG)),
@@ -603,6 +654,33 @@ mod tests {
         assert!(hints.contains(&("a/h", "lineup")));
         assert!(hints.contains(&("Enter", "gameday")));
         assert!(hints.contains(&("c", "card")));
+        assert!(hints.contains(&("t", "delay")));
+    }
+
+    #[test]
+    fn gameday_footer_surfaces_the_broadcast_delay() {
+        // the delay is set while a game is on; it has to be reachable without
+        // leaving the game screen for the help page
+        let mut app = App::new();
+        app.state.active_tab = MenuItem::Gameday;
+        assert!(context_key_hints(&app).contains(&("t", "delay")));
+    }
+
+    #[test]
+    fn no_delay_badge_when_the_delay_is_off() {
+        let mut app = App::new();
+        app.settings.tv_delay_seconds = 0;
+        assert!(delay_badge_spans(&app).is_none());
+    }
+
+    #[test]
+    fn delay_badge_names_the_configured_delay() {
+        let mut app = App::new();
+        app.settings.tv_delay_seconds = 30;
+        // nothing held yet, so the badge is steady rather than counting
+        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "DELAY 30s");
     }
 
     #[test]
