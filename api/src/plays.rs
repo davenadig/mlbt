@@ -90,6 +90,9 @@ pub struct PlayEvent {
     pub hit_data: Option<HitData>,
     pub is_pitch: bool,
     pub is_base_running_play: Option<bool>,
+    /// Set on lineup changes: pitching changes, pinch hitters and runners,
+    /// defensive substitutions and switches.
+    pub is_substitution: Option<bool>,
     pub pitch_number: Option<u8>,
     pub review_details: Option<ReviewDetails>,
 }

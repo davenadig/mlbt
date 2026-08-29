@@ -151,6 +151,7 @@ mod tests {
     fn pitch(code: &str, speed: f64, strike: bool) -> PitchEvent {
         PitchEvent {
             event_type: PitchEventType::Pitch,
+            is_substitution: false,
             description: String::new(),
             pitch: Some(Pitch {
                 strike,
@@ -169,6 +170,7 @@ mod tests {
     fn running_event() -> PitchEvent {
         PitchEvent {
             event_type: PitchEventType::Running,
+            is_substitution: false,
             description: "Pickoff attempt".to_string(),
             pitch: None,
             hit_data: None,

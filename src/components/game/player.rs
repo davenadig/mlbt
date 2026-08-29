@@ -9,6 +9,13 @@ pub struct Player {
     pub id: u64,
     pub first_name: String,
     pub last_name: String,
+    /// As the API writes it in play descriptions, which is what substitution lines
+    /// have to be matched against — `use_name` + `use_last_name` do not always
+    /// reproduce it.
+    pub full_name: String,
+    /// Jersey number. `None` for the occasional player the API has no number for,
+    /// who then goes unnumbered rather than getting a `#` with nothing after it.
+    pub number: Option<String>,
     pub boxscore_name: String,
     pub batter_side: String,
     pub pitch_hand: String,
@@ -33,6 +40,11 @@ impl From<&FullPlayer> for Player {
                 .use_name
                 .clone()
                 .unwrap_or_else(|| DEFAULT_NAME.to_owned()),
+            full_name: player.full_name.clone(),
+            number: player
+                .primary_number
+                .clone()
+                .filter(|n| !n.trim().is_empty()),
             last_name: player
                 .use_last_name
                 .clone()
@@ -62,6 +74,8 @@ impl Default for Player {
             id: 0,
             first_name: DEFAULT_NAME.to_owned(),
             last_name: DEFAULT_NAME.to_owned(),
+            full_name: String::new(),
+            number: None,
             boxscore_name: DEFAULT_NAME.to_owned(),
             batter_side: DEFAULT_NAME.to_owned(),
             pitch_hand: DEFAULT_NAME.to_owned(),
