@@ -8,7 +8,7 @@ use crossterm::event::KeyCode::Char;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::error;
 use mlbt_api::client::{Qualification, StatGroup};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard, mpsc};
@@ -254,20 +254,45 @@ pub async fn handle_key_bindings(
     }
 }
 
+/// Where a failed card leaves its output. Stable on purpose: the TUI cannot show
+/// a wall of text, but it can tell you one path to look at.
+fn scorecard_log_path(home: &Path) -> PathBuf {
+    home.join(".cache/cogspace/baseball/logs/mlbt-card.log")
+}
+
 fn scorecard_command(home: &Path, game_id: u64) -> Command {
-    let mut command = Command::new(home.join(".bun/bin/bun"));
+    // One stable entry point, not two paths into cogspace. This used to invoke
+    // bun directly against personal/baseball/mlb-client.mjs, so mlbt had to know
+    // where bun lives AND what the script is called; either moving broke the `c`
+    // key with no visible symptom.
+    let mut command = Command::new(home.join("GitHub/cogspace/tools/bin/cog-baseball"));
     command
-        .arg(home.join("GitHub/cogspace/personal/baseball/mlb-client.mjs"))
+        .arg("card")
         .arg("--game-pk")
         .arg(game_id.to_string())
         // Render and open a print-ready PDF rather than the OpenCard editor. At
         // the ballpark the card wants printing, not editing, and the editor path
         // costs a vite dev server and a browser tab to get there.
         .arg("--pdf")
+        .stdin(Stdio::null());
+    command
+}
+
+/// macOS notification. The TUI owns the terminal, so a failed card has nowhere
+/// on screen to report itself; this is the one channel that reaches Dave while
+/// he is looking at a game.
+fn notify_failure(game_id: u64, log: &Path) {
+    let script = format!(
+        "display notification \"Scorecard failed for game {game_id}. See {}\" with title \"mlbt\"",
+        log.display()
+    );
+    let _ = Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command
+        .stderr(Stdio::null())
+        .spawn();
 }
 
 fn launch_scorecard(game_id: u64) {
@@ -275,9 +300,51 @@ fn launch_scorecard(game_id: u64) {
         error!("cannot launch scorecard: HOME is not set");
         return;
     };
+    let home = PathBuf::from(&home);
+    let log_path = scorecard_log_path(&home);
 
-    if let Err(err) = scorecard_command(Path::new(&home), game_id).spawn() {
-        error!("cannot launch scorecard for game {game_id}: {err}");
+    // Output went to /dev/null, so a card that failed at the ballpark failed
+    // silently and read as a dead key. Keep it.
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log = std::fs::File::create(&log_path);
+
+    let mut command = scorecard_command(&home, game_id);
+    match log {
+        Ok(file) => {
+            let errors = match file.try_clone() {
+                Ok(clone) => Stdio::from(clone),
+                Err(_) => Stdio::null(),
+            };
+            command.stdout(Stdio::from(file)).stderr(errors);
+        }
+        Err(err) => {
+            error!("cannot open scorecard log {}: {err}", log_path.display());
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+
+    match command.spawn() {
+        // Waiting happens on its own thread: rendering takes a couple of seconds
+        // and the TUI must stay live through it.
+        Ok(mut child) => {
+            std::thread::spawn(move || match child.wait() {
+                Ok(status) if status.success() => {}
+                Ok(status) => {
+                    error!("scorecard for game {game_id} exited with {status}");
+                    notify_failure(game_id, &log_path);
+                }
+                Err(err) => {
+                    error!("scorecard for game {game_id} could not be waited on: {err}");
+                    notify_failure(game_id, &log_path);
+                }
+            });
+        }
+        Err(err) => {
+            error!("cannot launch scorecard for game {game_id}: {err}");
+            notify_failure(game_id, &log_path);
+        }
     }
 }
 
@@ -615,15 +682,23 @@ mod tests {
     fn scorecard_command_targets_selected_game() {
         let command = scorecard_command(Path::new("/Users/test"), 824725);
 
-        assert_eq!(command.get_program(), "/Users/test/.bun/bin/bun");
+        // mlbt knows one path into cogspace, and it is the stable wrapper -
+        // not the bun binary and not the script behind it.
+        assert_eq!(
+            command.get_program(),
+            "/Users/test/GitHub/cogspace/tools/bin/cog-baseball"
+        );
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            [
-                "/Users/test/GitHub/cogspace/personal/baseball/mlb-client.mjs",
-                "--game-pk",
-                "824725",
-                "--pdf",
-            ]
+            ["card", "--game-pk", "824725", "--pdf"]
+        );
+    }
+
+    #[test]
+    fn scorecard_failures_have_somewhere_to_go() {
+        assert_eq!(
+            scorecard_log_path(Path::new("/Users/test")),
+            Path::new("/Users/test/.cache/cogspace/baseball/logs/mlbt-card.log")
         );
     }
 }
