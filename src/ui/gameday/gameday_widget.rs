@@ -57,6 +57,7 @@ impl Widget for GamedayWidget<'_> {
             let at_bat_widget = AtBatWidget {
                 game: &self.state.game,
                 selected_at_bat: self.state.selected_at_bat(),
+                show_pitch_tracker: self.state.panels.pitch_tracker,
             };
             Widget::render(at_bat_widget, at_bat, buf);
         }

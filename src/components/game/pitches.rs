@@ -25,6 +25,9 @@ pub struct Pitch {
     pub location: (f64, f64),
     pub index: u8,
     pub pitch_type: String, // fastball, slider, etc.
+    /// Short API code for the pitch type, e.g. `FF`, `SL`. The pitch tracker column
+    /// is too narrow for the description, and the codes are what a scorer writes.
+    pub pitch_type_code: String,
     pub speed: f64,
     pub strike_zone_bot: f64,
     pub strike_zone_top: f64,
@@ -41,6 +44,7 @@ impl Default for Pitch {
             location: (0.0, 0.0),
             index: 0,
             pitch_type: "-".to_string(),
+            pitch_type_code: String::new(),
             speed: 0.0,
             strike_zone_bot: DEFAULT_SZ_BOT,
             strike_zone_top: DEFAULT_SZ_TOP,
@@ -94,6 +98,11 @@ impl From<&PlayEvent> for Pitch {
                 .pitch_type
                 .as_ref()
                 .map(|pt| pt.description.clone())
+                .unwrap_or_default(),
+            pitch_type_code: pitch_details
+                .pitch_type
+                .as_ref()
+                .map(|pt| pt.code.clone())
                 .unwrap_or_default(),
             location: (*x_coord, *z_coord),
             index: play.pitch_number.unwrap_or_default(),

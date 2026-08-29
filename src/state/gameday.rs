@@ -148,6 +148,10 @@ impl GamedayState {
         self.panels.win_probability = !self.panels.win_probability;
     }
 
+    pub fn toggle_pitch_tracker(&mut self) {
+        self.panels.pitch_tracker = !self.panels.pitch_tracker;
+    }
+
     pub fn toggle_scoring_plays_only(&mut self) {
         self.scoring_plays_only = !self.scoring_plays_only;
         if self.scoring_plays_only {
@@ -181,6 +185,9 @@ pub struct GamedayPanels {
     pub at_bat: bool,
     pub boxscore: bool,
     pub win_probability: bool,
+    /// The per-pitcher totals column beside the strike zone. Lives inside the at bat
+    /// panel rather than beside it, so it is deliberately absent from `count`.
+    pub pitch_tracker: bool,
 }
 
 impl GamedayPanels {
@@ -197,6 +204,7 @@ impl Default for GamedayPanels {
             at_bat: true,
             boxscore: false,
             win_probability: true,
+            pitch_tracker: true,
         }
     }
 }

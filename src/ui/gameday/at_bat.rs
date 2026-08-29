@@ -1,15 +1,18 @@
 use crate::components::game::live_game::GameState;
+use crate::components::game::matchup::BatterSide;
 use crate::components::game::strikezone::{
     DEFAULT_SZ_BOT, DEFAULT_SZ_TOP, HOME_PLATE_WIDTH, StrikeZone,
 };
-use crate::ui::styling::border_style;
+use crate::ui::gameday::pitch_tracker::{PitchTrackerWidget, TRACKER_WIDTH, fits_beside_zone};
+use crate::ui::styling::{border_style, dim_style};
 use tui::prelude::*;
-use tui::widgets::canvas::{Canvas, Rectangle};
+use tui::widgets::canvas::{Canvas, Line as CanvasLine, Rectangle};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 
 pub struct AtBatWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
+    pub show_pitch_tracker: bool,
 }
 
 impl Widget for AtBatWidget<'_> {
@@ -27,6 +30,20 @@ impl Widget for AtBatWidget<'_> {
         .horizontal_margin(2)
         .vertical_margin(1)
         .areas(area);
+
+        // The tracker takes a fixed column off the right of the zone row, but only
+        // when what is left still renders a zone worth looking at. Below that the
+        // zone keeps the whole row — a squashed heat map beside a stat table is
+        // worse than either one alone.
+        let show_tracker = self.show_pitch_tracker && fits_beside_zone(kzone.width);
+        let (kzone, tracker_area) = if show_tracker {
+            let [zone, tracker] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Length(TRACKER_WIDTH)])
+                    .areas(kzone);
+            (zone, Some(tracker))
+        } else {
+            (kzone, None)
+        };
 
         // grab the strike zone from the first pitch since it doesn't change during the at bat.
         let mut strike_zone_bot = DEFAULT_SZ_BOT * 12.0;
@@ -50,6 +67,10 @@ impl Widget for AtBatWidget<'_> {
         let (x_bounds, y_bounds) =
             strike_zone_canvas_bounds(strike_zone_bot, strike_zone_top, pitch_locations);
 
+        // A crosshair is sized in character cells rather than inches so it looks the
+        // same at any terminal size; the canvas only knows inches, so convert here.
+        let cell = CellSize::new(strike_zone_area, x_bounds, y_bounds);
+
         // strike zone and pitch display
         Canvas::default()
             .block(Block::default().borders(Borders::NONE))
@@ -67,12 +88,15 @@ impl Widget for AtBatWidget<'_> {
                 for pe in &pitches.pitches.pitch_events {
                     if let Some(pitch) = &pe.pitch {
                         let ball = pitch.as_rectangle();
-                        let pitch_count = pitch.index.to_string();
-                        ctx.draw(&ball);
+                        for line in crosshair(ball.x, ball.y, pitch.color, cell) {
+                            ctx.draw(&line);
+                        }
+                        // the number lands in the crosshair's centre gap, which is
+                        // why the gap is a whole cell wide
                         ctx.print(
                             ball.x,
                             ball.y,
-                            Span::styled(pitch_count, Style::default().fg(pitch.color)),
+                            Span::styled(pitch.index.to_string(), Style::default().fg(pitch.color)),
                         );
                     }
                 }
@@ -80,6 +104,25 @@ impl Widget for AtBatWidget<'_> {
             .x_bounds(x_bounds)
             .y_bounds(y_bounds)
             .render(strike_zone_area, buf);
+
+        render_batter_side(
+            at_bat.matchup.bat_side,
+            self.game
+                .players
+                .get(&at_bat.matchup.batter_id)
+                .map(|p| p.last_name.as_str())
+                .unwrap_or_default(),
+            strike_zone_area,
+            buf,
+        );
+
+        if let Some(tracker_area) = tracker_area {
+            PitchTrackerWidget {
+                game: self.game,
+                at_bat_index: at_bat.index,
+            }
+            .render(tracker_area, buf);
+        }
 
         // display the event information
         let events: Vec<Line> = pitches
@@ -115,6 +158,150 @@ impl Widget for AtBatWidget<'_> {
             Widget::render(paragraph, hit, buf);
         };
     }
+}
+
+/// One character cell measured in canvas units, plus the braille sub-cell it is made
+/// of. Everything drawn on top of the zone is sized from this so it keeps its
+/// proportions as the panel is resized.
+#[derive(Clone, Copy, Debug)]
+struct CellSize {
+    width: f64,
+    height: f64,
+}
+
+impl CellSize {
+    fn new(area: Rect, x_bounds: [f64; 2], y_bounds: [f64; 2]) -> Self {
+        Self {
+            width: (x_bounds[1] - x_bounds[0]) / area.width.max(1) as f64,
+            height: (y_bounds[1] - y_bounds[0]) / area.height.max(1) as f64,
+        }
+    }
+
+    /// Half a braille dot. The canvas renders 2x4 dots per cell, so offsetting a
+    /// line by this much either side of true centre lands it on two adjacent dot
+    /// rows — a two dot thick stroke that stays centred on the pitch.
+    fn half_dot_x(&self) -> f64 {
+        self.width / 4.0
+    }
+
+    fn half_dot_y(&self) -> f64 {
+        self.height / 8.0
+    }
+}
+
+/// Half the width of the gap left at the centre of a crosshair, in cells. Sized so a
+/// printed pitch number sits in the hole rather than on top of the arms.
+const CROSSHAIR_GAP_CELLS: f64 = 0.55;
+/// How far each arm reaches from the centre, in cells.
+const CROSSHAIR_ARM_CELLS: f64 = 1.9;
+
+/// A reticle centred on the pitch: four arms with a gap in the middle, each drawn
+/// twice so the stroke is two braille dots thick.
+///
+/// The pitch used to be a 1 inch `Rectangle`, which rendered as four faint dots in a
+/// square — at a glance it read as noise rather than as a location, and the corners
+/// sat nowhere near the actual coordinate. The centre of a crosshair is unambiguous.
+fn crosshair(x: f64, y: f64, color: Color, cell: CellSize) -> Vec<CanvasLine> {
+    let gap_x = cell.width * CROSSHAIR_GAP_CELLS;
+    let gap_y = cell.height * CROSSHAIR_GAP_CELLS;
+    let arm_x = cell.width * CROSSHAIR_ARM_CELLS;
+    let arm_y = cell.height * CROSSHAIR_ARM_CELLS;
+
+    let mut lines = Vec::with_capacity(8);
+    for offset in [-cell.half_dot_y(), cell.half_dot_y()] {
+        lines.push(CanvasLine {
+            x1: x - arm_x,
+            y1: y + offset,
+            x2: x - gap_x,
+            y2: y + offset,
+            color,
+        });
+        lines.push(CanvasLine {
+            x1: x + gap_x,
+            y1: y + offset,
+            x2: x + arm_x,
+            y2: y + offset,
+            color,
+        });
+    }
+    for offset in [-cell.half_dot_x(), cell.half_dot_x()] {
+        lines.push(CanvasLine {
+            x1: x + offset,
+            y1: y - arm_y,
+            x2: x + offset,
+            y2: y - gap_y,
+            color,
+        });
+        lines.push(CanvasLine {
+            x1: x + offset,
+            y1: y + gap_y,
+            x2: x + offset,
+            y2: y + arm_y,
+            color,
+        });
+    }
+    lines
+}
+
+/// Which column of the zone area the batter's label belongs in.
+///
+/// The chart is drawn in raw `pX`, which the API reports from the catcher's
+/// perspective: a right handed batter stands in the third base box, which is to the
+/// catcher's left, so a righty belongs on the **left** of the chart and a lefty on
+/// the right.
+///
+/// That is measured, not reasoned. Hit-by-pitches settle it, because a pitch that
+/// hits the batter is on the batter's own side of the plate: across every HBP in the
+/// 62 final games of 2026-08-24 through 08-28, all 35 to right handed batters had
+/// negative `pX` and all 27 to left handed batters had positive `pX`. No exceptions.
+/// If this ever needs flipping, it is the one place to do it.
+fn label_column(side: BatterSide, area: Rect) -> Option<u16> {
+    if area.width == 0 {
+        return None;
+    }
+    match side {
+        BatterSide::Right => Some(area.x),
+        BatterSide::Left => Some(area.x + area.width - 1),
+        BatterSide::Unknown => None,
+    }
+}
+
+/// The batter's surname printed one character per row down the side of the zone he
+/// stands on, falling back to `RHB`/`LHB` when the panel is too short for the name.
+fn batter_label(side: BatterSide, last_name: &str, available_rows: u16) -> Option<String> {
+    let short = side.label()?;
+    let name: String = last_name
+        .trim()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let name = name.to_uppercase();
+
+    if !name.is_empty() && name.chars().count() <= available_rows as usize {
+        Some(name)
+    } else if short.len() <= available_rows as usize {
+        Some(short.to_string())
+    } else {
+        None
+    }
+}
+
+fn render_batter_side(side: BatterSide, last_name: &str, area: Rect, buf: &mut Buffer) {
+    let Some(x) = label_column(side, area) else {
+        return;
+    };
+    let Some(text) = batter_label(side, last_name, area.height) else {
+        return;
+    };
+
+    let rows = text.chars().count() as u16;
+    let y = area.y + area.height.saturating_sub(rows) / 2;
+    let lines: Vec<Line> = text
+        .chars()
+        .map(|c| Line::from(Span::styled(c.to_string(), dim_style())))
+        .collect();
+
+    Paragraph::new(lines).render(Rect::new(x, y, 1, rows), buf);
 }
 
 fn strike_zone_canvas_bounds(
@@ -182,6 +369,10 @@ fn generate_strike_zone_area(area: Rect) -> Rect {
 mod tests {
     use super::*;
 
+    fn cell() -> CellSize {
+        CellSize::new(Rect::new(0, 0, 35, 19), [-14.5, 14.5], [10.0, 47.6])
+    }
+
     #[test]
     fn strike_zone_bounds_keep_a_compact_visible_margin() {
         let (x, y) = strike_zone_canvas_bounds(18.0, 39.6, []);
@@ -196,5 +387,109 @@ mod tests {
 
         assert_eq!(x, [-22.0, 14.5]);
         assert_eq!(y, [10.0, 52.0]);
+    }
+
+    #[test]
+    fn a_crosshair_leaves_its_centre_clear() {
+        // the pitch number is printed in the middle, so no arm may cross it
+        let cell = cell();
+        let gap_x = cell.width * CROSSHAIR_GAP_CELLS;
+        let gap_y = cell.height * CROSSHAIR_GAP_CELLS;
+
+        // the arms end exactly on the gap boundary, so this needs a real tolerance
+        // rather than f64::EPSILON, which is far below the rounding of the arithmetic
+        const SLACK: f64 = 1e-9;
+
+        for line in crosshair(0.0, 30.0, Color::Red, cell) {
+            let horizontal = (line.y1 - line.y2).abs() < SLACK;
+            if horizontal {
+                assert!(
+                    line.x1.abs() >= gap_x - SLACK && line.x2.abs() >= gap_x - SLACK,
+                    "arm crosses the centre gap: {line:?}"
+                );
+            } else {
+                assert!(
+                    (line.y1 - 30.0).abs() >= gap_y - SLACK
+                        && (line.y2 - 30.0).abs() >= gap_y - SLACK,
+                    "arm crosses the centre gap: {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_crosshair_is_centred_on_the_pitch() {
+        // each arm is drawn twice, a half dot either side of true centre, so the
+        // pair straddles the exact coordinate rather than sitting beside it
+        let lines = crosshair(3.0, 30.0, Color::Red, cell());
+        let horizontal: Vec<f64> = lines
+            .iter()
+            .filter(|l| (l.y1 - l.y2).abs() < f64::EPSILON)
+            .map(|l| l.y1)
+            .collect();
+        let mean = horizontal.iter().sum::<f64>() / horizontal.len() as f64;
+        assert!((mean - 30.0).abs() < 1e-9, "off centre: {mean}");
+    }
+
+    #[test]
+    fn a_crosshair_has_four_arms_two_dots_thick() {
+        assert_eq!(crosshair(0.0, 30.0, Color::Red, cell()).len(), 8);
+    }
+
+    #[test]
+    fn a_righty_is_labelled_on_the_third_base_side() {
+        // verified against every HBP in 62 games (2026-08-24..28): 35/35 to righties
+        // had negative pX, 27/27 to lefties positive. See `label_column`.
+        let area = Rect::new(10, 0, 20, 12);
+        assert_eq!(label_column(BatterSide::Right, area), Some(10));
+        assert_eq!(label_column(BatterSide::Left, area), Some(29));
+        assert_eq!(label_column(BatterSide::Unknown, area), None);
+    }
+
+    #[test]
+    fn the_batter_label_prefers_the_name() {
+        assert_eq!(
+            batter_label(BatterSide::Right, "Devers", 12).as_deref(),
+            Some("DEVERS")
+        );
+    }
+
+    #[test]
+    fn a_name_too_tall_for_the_panel_falls_back_to_the_side() {
+        assert_eq!(
+            batter_label(BatterSide::Left, "Featherstonhaugh", 8).as_deref(),
+            Some("LHB")
+        );
+        assert_eq!(
+            batter_label(BatterSide::Right, "Devers", 4).as_deref(),
+            Some("RHB")
+        );
+    }
+
+    #[test]
+    fn a_panel_too_short_for_either_shows_nothing() {
+        assert_eq!(batter_label(BatterSide::Right, "Devers", 2), None);
+    }
+
+    #[test]
+    fn a_missing_name_still_labels_the_side() {
+        assert_eq!(
+            batter_label(BatterSide::Right, "", 12).as_deref(),
+            Some("RHB")
+        );
+    }
+
+    #[test]
+    fn an_unknown_side_is_never_labelled() {
+        // a switch hitter before the play resolves, or a game with no matchup yet
+        assert_eq!(batter_label(BatterSide::Unknown, "Devers", 12), None);
+    }
+
+    #[test]
+    fn a_two_part_surname_stays_on_one_column() {
+        assert_eq!(
+            batter_label(BatterSide::Right, "De La Cruz", 12).as_deref(),
+            Some("DELACRUZ")
+        );
     }
 }

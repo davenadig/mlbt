@@ -202,6 +202,7 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("p", "pitches"),
             ("b", "box"),
             ("w", "win%"),
+            ("n", "pitches"),
             ("!", "scoring"),
             ("a/h", "lineup"),
             ("c", "card"),

@@ -35,7 +35,7 @@ const SCOREBOARD_DOCS: &[&[&str; 2]; 11] = &[
     &["Toggle sort mode", "s"],
     &["Cycle TV delay", "t"],
 ];
-const GAMEDAY_DOCS: &[&[&str; 2]; 14] = &[
+const GAMEDAY_DOCS: &[&[&str; 2]; 15] = &[
     &["Gameday", "2"],
     &["Toggle game info", "i"],
     &["Toggle pitches", "p"],
@@ -44,6 +44,7 @@ const GAMEDAY_DOCS: &[&[&str; 2]; 14] = &[
     &["Scroll boxscore down", "Shift + j/↓"],
     &["Scroll boxscore up", "Shift + k/↑"],
     &["Toggle win probability", "w"],
+    &["Toggle pitch tracker", "n"],
     &["Move down at bat", "j/↓"],
     &["Move up at bat", "k/↑"],
     &["Go to live at bat", "l"],

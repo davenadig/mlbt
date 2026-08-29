@@ -3,6 +3,38 @@ use mlbt_api::plays::{Count, Play};
 use tui::prelude::Stylize;
 use tui::text::Line;
 
+/// Which box the batter stood in for this at bat.
+///
+/// Taken from the play's own matchup rather than the player's listed side, because
+/// a switch hitter's listed side is `S` and only the play knows which way he turned
+/// around for this pitcher.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BatterSide {
+    Left,
+    Right,
+    #[default]
+    Unknown,
+}
+
+impl BatterSide {
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            "L" => BatterSide::Left,
+            "R" => BatterSide::Right,
+            _ => BatterSide::Unknown,
+        }
+    }
+
+    /// Short label for the side, e.g. when a name is too long to print vertically.
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            BatterSide::Left => Some("LHB"),
+            BatterSide::Right => Some("RHB"),
+            BatterSide::Unknown => None,
+        }
+    }
+}
+
 pub struct Matchup {
     #[allow(dead_code)]
     pub at_bat_index: u8,
@@ -14,6 +46,7 @@ pub struct Matchup {
     pub batter_id: u64,
     pub count: Count,
     pub runners: Runners,
+    pub bat_side: BatterSide,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -64,6 +97,7 @@ impl Default for Matchup {
             batter_id: 0,
             count: Count::default(),
             runners: Runners::default(),
+            bat_side: BatterSide::default(),
         }
     }
 }
@@ -80,6 +114,7 @@ impl From<&Play> for Matchup {
             batter_id: play.matchup.batter.id,
             count: play.count.clone(),
             runners: Runners::from_matchup(&play.matchup),
+            bat_side: BatterSide::from_code(&play.matchup.bat_side.code),
         }
     }
 }
@@ -207,6 +242,16 @@ mod tests {
     fn header(name: &str, challenges: Option<u8>, is_home: bool, current: bool) -> String {
         let m = Matchup::default();
         m.format_team_lines(name, challenges, is_home, current, &HashMap::new())[0].to_string()
+    }
+
+    #[test]
+    fn batter_side_reads_the_plays_own_code() {
+        // a switch hitter is listed as `S` on the player record; the play carries the
+        // side he actually batted from, which is what the strike zone needs to label
+        assert_eq!(BatterSide::from_code("L"), BatterSide::Left);
+        assert_eq!(BatterSide::from_code("R"), BatterSide::Right);
+        assert_eq!(BatterSide::from_code("S"), BatterSide::Unknown);
+        assert_eq!(BatterSide::from_code(""), BatterSide::Unknown);
     }
 
     #[test]
