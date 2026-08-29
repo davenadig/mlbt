@@ -68,6 +68,7 @@ impl PitchEvent {
     pub fn as_lines(
         &self,
         debug: bool,
+        show_movement: bool,
         home_team: &Team,
         away_team: &Team,
         players: &PlayerMap,
@@ -76,7 +77,7 @@ impl PitchEvent {
             PitchEventType::Pitch if self.pitch.is_some() => self
                 .pitch
                 .as_ref()
-                .map(|pitch| pitch.as_lines(debug, home_team, away_team, players)),
+                .map(|pitch| pitch.as_lines(debug, show_movement, home_team, away_team, players)),
             PitchEventType::Pitch => None,
             _ => Some(self.format_non_pitch_event(home_team.abbreviation, away_team.abbreviation)),
         }

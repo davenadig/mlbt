@@ -171,6 +171,15 @@ pub struct Breaks {
     pub break_angle: Option<f64>,
     pub break_length: Option<f64>,
     pub break_y: Option<f64>,
+    /// Total vertical break in inches, gravity included, so almost always negative.
+    pub break_vertical: Option<f64>,
+    /// Induced vertical break in inches — the "ride" number, gravity removed.
+    /// Positive carries above a spinless pitch, negative drops below it.
+    pub break_vertical_induced: Option<f64>,
+    /// Horizontal break in inches, **from the pitcher's perspective**: positive is a
+    /// right hander's arm side. That is the opposite sign from `pX`, which the strike
+    /// zone is drawn in. See `Movement` in `components/game/pitches.rs`.
+    pub break_horizontal: Option<f64>,
     pub spin_rate: Option<u32>,
     pub spin_direction: Option<u32>,
 }

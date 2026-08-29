@@ -13,6 +13,7 @@ pub struct AtBatWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
     pub show_pitch_tracker: bool,
+    pub show_movement: bool,
 }
 
 impl Widget for AtBatWidget<'_> {
@@ -128,6 +129,7 @@ impl Widget for AtBatWidget<'_> {
             .filter_map(|event| {
                 event.as_lines(
                     false,
+                    self.show_movement,
                     &self.game.home_team,
                     &self.game.away_team,
                     &self.game.players,

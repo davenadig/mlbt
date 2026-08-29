@@ -230,6 +230,7 @@ pub async fn handle_key_bindings(
         (MenuItem::Gameday, Char('b'), _) => guard.state.gameday.toggle_boxscore(),
         (MenuItem::Gameday, Char('w'), _) => guard.state.gameday.toggle_win_probability(),
         (MenuItem::Gameday, Char('n'), _) => guard.state.gameday.toggle_pitch_tracker(),
+        (MenuItem::Gameday, Char('m'), _) => guard.state.gameday.toggle_movement(),
         (MenuItem::Gameday, Char('J') | KeyCode::Down, KeyModifiers::SHIFT) => {
             guard.state.box_score.scroll_down()
         }
