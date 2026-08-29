@@ -8,7 +8,6 @@ use mlbt_api::plays::{Play, PlayEvent};
 use tui::{
     style::{Color, Style},
     text::{Line, Span},
-    widgets::canvas::Rectangle,
 };
 
 #[derive(Debug, Default)]
@@ -115,17 +114,11 @@ impl From<&PlayEvent> for Pitch {
 }
 
 impl Pitch {
-    /// Convert a pitch into a TUI Rectangle so it can be displayed in a Canvas.
-    pub fn as_rectangle(&self) -> Rectangle {
+    /// Where the pitch crossed the plate, in inches, for the strike zone canvas.
+    /// The API reports feet; everything the canvas draws is in inches.
+    pub fn plot_position(&self) -> (f64, f64) {
         const SCALE: f64 = 12.0; // feet to inches
-        const BALL_SCALE: f64 = 1.0;
-        Rectangle {
-            color: self.color,
-            height: BALL_SCALE,
-            width: BALL_SCALE,
-            x: self.location.0 * SCALE,
-            y: self.location.1 * SCALE,
-        }
+        (self.location.0 * SCALE, self.location.1 * SCALE)
     }
 
     /// Convert a pitch into a TUI Line item, displaying the pitch index, result (ball, strike, ect)

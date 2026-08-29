@@ -120,6 +120,46 @@ pub fn win_pct_color(pct: &str) -> Color {
         .unwrap_or(TEXT_COLOR)
 }
 
+/// Pick black or white — whichever has more contrast printed on `background`.
+///
+/// The API supplies pitch colors and they run from a dark red called strike to a
+/// bright green ball, so no fixed foreground serves all of them.
+///
+/// This uses the WCAG relative luminance rather than a plain luma average, and the
+/// difference is not academic: a mid green like `rgb(0, 200, 0)` reads as *dark*
+/// under Rec. 601 luma and would get white text, which lands at a 2.2:1 contrast
+/// ratio. Black on the same green is 9.4:1.
+pub fn contrast_on(background: Color) -> Color {
+    match background {
+        Color::Rgb(r, g, b) => {
+            let luminance = relative_luminance(r, g, b);
+            // the ratio against white is 1.05/(L+0.05) and against black is
+            // (L+0.05)/0.05; they cross at L = 0.179
+            if luminance > 0.179 {
+                Color::Black
+            } else {
+                Color::White
+            }
+        }
+        // a named or indexed color's brightness is a terminal theme decision, so
+        // there is nothing to measure; white on the usual dark palettes is safer
+        _ => Color::White,
+    }
+}
+
+/// WCAG relative luminance of an sRGB color, 0.0 (black) to 1.0 (white).
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    fn linearize(channel: u8) -> f64 {
+        let c = channel as f64 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+}
+
 /// Convert a string from the API to a Color::Rgb. The string starts out as:
 /// "rgba(255, 255, 255, 0.55)".
 pub fn convert_color(s: String) -> Color {
@@ -134,6 +174,55 @@ pub fn convert_color(s: String) -> Color {
         error!("color doesn't start with 'rgba(' {s:?}");
         Color::Rgb(0, 0, 0)
     }
+}
+
+/// WCAG contrast ratio between two luminances, lighter first.
+#[cfg(test)]
+fn contrast_ratio(a: f64, b: f64) -> f64 {
+    let (hi, lo) = if a > b { (a, b) } else { (b, a) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+#[test]
+fn contrast_anchors_at_the_extremes() {
+    assert_eq!(contrast_on(Color::Rgb(255, 255, 255)), Color::Black);
+    assert_eq!(contrast_on(Color::Rgb(0, 0, 0)), Color::White);
+}
+
+#[test]
+fn contrast_always_picks_the_more_readable_of_the_two() {
+    // asserting the property rather than a table of expected colors: the point is
+    // that the chosen foreground wins on contrast, not that it is any given colour
+    let samples = [
+        (170, 21, 11), // called strike red
+        (39, 161, 39), // ball green
+        (0, 200, 0),   // the mid green a luma average gets wrong
+        (0, 0, 200),
+        (150, 188, 255), // in play, light blue
+        (6, 90, 238),
+        (255, 255, 0),
+        (128, 128, 128),
+    ];
+    for (r, g, b) in samples {
+        let background = relative_luminance(r, g, b);
+        let against_white = contrast_ratio(1.0, background);
+        let against_black = contrast_ratio(0.0, background);
+        let expected = if against_black > against_white {
+            Color::Black
+        } else {
+            Color::White
+        };
+        assert_eq!(
+            contrast_on(Color::Rgb(r, g, b)),
+            expected,
+            "rgb({r}, {g}, {b}) picked the lower contrast foreground"
+        );
+    }
+}
+
+#[test]
+fn a_themed_color_defaults_to_white() {
+    assert_eq!(contrast_on(Color::Reset), Color::White);
 }
 
 #[test]

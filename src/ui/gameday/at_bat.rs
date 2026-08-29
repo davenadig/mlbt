@@ -4,9 +4,9 @@ use crate::components::game::strikezone::{
     DEFAULT_SZ_BOT, DEFAULT_SZ_TOP, HOME_PLATE_WIDTH, StrikeZone,
 };
 use crate::ui::gameday::pitch_tracker::{PitchTrackerWidget, TRACKER_WIDTH, fits_beside_zone};
-use crate::ui::styling::{border_style, dim_style};
+use crate::ui::styling::{border_style, contrast_on, dim_style};
 use tui::prelude::*;
-use tui::widgets::canvas::{Canvas, Line as CanvasLine, Rectangle};
+use tui::widgets::canvas::{Canvas, Rectangle};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 
 pub struct AtBatWidget<'a> {
@@ -58,18 +58,17 @@ impl Widget for AtBatWidget<'_> {
         let height = strike_zone_top - strike_zone_bot;
         let coords = StrikeZone::build_coords(strike_zone_bot, strike_zone_top);
         let strike_zone_area = generate_strike_zone_area(kzone);
-        let pitch_locations = pitches.pitches.pitch_events.iter().filter_map(|event| {
-            event.pitch.as_ref().map(|pitch| {
-                let marker = pitch.as_rectangle();
-                (marker.x, marker.y)
-            })
-        });
+        let pitch_locations = pitches
+            .pitches
+            .pitch_events
+            .iter()
+            .filter_map(|event| event.pitch.as_ref().map(|pitch| pitch.plot_position()));
         let (x_bounds, y_bounds) =
             strike_zone_canvas_bounds(strike_zone_bot, strike_zone_top, pitch_locations);
 
-        // A crosshair is sized in character cells rather than inches so it looks the
-        // same at any terminal size; the canvas only knows inches, so convert here.
-        let cell = CellSize::new(strike_zone_area, x_bounds, y_bounds);
+        // A marker wider than one cell has to be nudged left to stay centred on the
+        // pitch, and the canvas only knows inches, so measure a cell here.
+        let cell_width = (x_bounds[1] - x_bounds[0]) / strike_zone_area.width.max(1) as f64;
 
         // strike zone and pitch display
         Canvas::default()
@@ -87,16 +86,12 @@ impl Widget for AtBatWidget<'_> {
                 }
                 for pe in &pitches.pitches.pitch_events {
                     if let Some(pitch) = &pe.pitch {
-                        let ball = pitch.as_rectangle();
-                        for line in crosshair(ball.x, ball.y, pitch.color, cell) {
-                            ctx.draw(&line);
-                        }
-                        // the number lands in the crosshair's centre gap, which is
-                        // why the gap is a whole cell wide
+                        let (x, y) = pitch.plot_position();
+                        let label = pitch.index.to_string();
                         ctx.print(
-                            ball.x,
-                            ball.y,
-                            Span::styled(pitch.index.to_string(), Style::default().fg(pitch.color)),
+                            label_origin(x, label.chars().count(), cell_width),
+                            y,
+                            Span::styled(label, marker_style(pitch.color)),
                         );
                     }
                 }
@@ -160,87 +155,28 @@ impl Widget for AtBatWidget<'_> {
     }
 }
 
-/// One character cell measured in canvas units, plus the braille sub-cell it is made
-/// of. Everything drawn on top of the zone is sized from this so it keeps its
-/// proportions as the panel is resized.
-#[derive(Clone, Copy, Debug)]
-struct CellSize {
-    width: f64,
-    height: f64,
-}
-
-impl CellSize {
-    fn new(area: Rect, x_bounds: [f64; 2], y_bounds: [f64; 2]) -> Self {
-        Self {
-            width: (x_bounds[1] - x_bounds[0]) / area.width.max(1) as f64,
-            height: (y_bounds[1] - y_bounds[0]) / area.height.max(1) as f64,
-        }
-    }
-
-    /// Half a braille dot. The canvas renders 2x4 dots per cell, so offsetting a
-    /// line by this much either side of true centre lands it on two adjacent dot
-    /// rows — a two dot thick stroke that stays centred on the pitch.
-    fn half_dot_x(&self) -> f64 {
-        self.width / 4.0
-    }
-
-    fn half_dot_y(&self) -> f64 {
-        self.height / 8.0
-    }
-}
-
-/// Half the width of the gap left at the centre of a crosshair, in cells. Sized so a
-/// printed pitch number sits in the hole rather than on top of the arms.
-const CROSSHAIR_GAP_CELLS: f64 = 0.55;
-/// How far each arm reaches from the centre, in cells.
-const CROSSHAIR_ARM_CELLS: f64 = 1.9;
-
-/// A reticle centred on the pitch: four arms with a gap in the middle, each drawn
-/// twice so the stroke is two braille dots thick.
+/// The pitch number *is* the marker, printed in reverse video: the pitch's own
+/// color as the background with black or white text over it, bold.
 ///
-/// The pitch used to be a 1 inch `Rectangle`, which rendered as four faint dots in a
-/// square — at a glance it read as noise rather than as a location, and the corners
-/// sat nowhere near the actual coordinate. The centre of a crosshair is unambiguous.
-fn crosshair(x: f64, y: f64, color: Color, cell: CellSize) -> Vec<CanvasLine> {
-    let gap_x = cell.width * CROSSHAIR_GAP_CELLS;
-    let gap_y = cell.height * CROSSHAIR_GAP_CELLS;
-    let arm_x = cell.width * CROSSHAIR_ARM_CELLS;
-    let arm_y = cell.height * CROSSHAIR_ARM_CELLS;
+/// It was a 1 inch `Rectangle`, which rendered as four faint braille dots in a
+/// square, and briefly a braille crosshair, which was worse — both drew a shape
+/// around the location instead of marking it, and neither survived being laid over
+/// a colored heat map. A filled chip is unmistakable against any zone color and
+/// carries the pitch number in the same character cells.
+fn marker_style(color: Color) -> Style {
+    Style::default()
+        .fg(contrast_on(color))
+        .bg(color)
+        .add_modifier(Modifier::BOLD)
+}
 
-    let mut lines = Vec::with_capacity(8);
-    for offset in [-cell.half_dot_y(), cell.half_dot_y()] {
-        lines.push(CanvasLine {
-            x1: x - arm_x,
-            y1: y + offset,
-            x2: x - gap_x,
-            y2: y + offset,
-            color,
-        });
-        lines.push(CanvasLine {
-            x1: x + gap_x,
-            y1: y + offset,
-            x2: x + arm_x,
-            y2: y + offset,
-            color,
-        });
-    }
-    for offset in [-cell.half_dot_x(), cell.half_dot_x()] {
-        lines.push(CanvasLine {
-            x1: x + offset,
-            y1: y - arm_y,
-            x2: x + offset,
-            y2: y - gap_y,
-            color,
-        });
-        lines.push(CanvasLine {
-            x1: x + offset,
-            y1: y + gap_y,
-            x2: x + offset,
-            y2: y + arm_y,
-            color,
-        });
-    }
-    lines
+/// Where to start printing a marker so it stays centred on the pitch.
+///
+/// `Context::print` puts the label's *left edge* at the given x, so a two digit
+/// pitch number would sit half a cell right of where the pitch actually crossed.
+/// Shifting left by half a cell per extra character straddles the true location.
+fn label_origin(x: f64, label_len: usize, cell_width: f64) -> f64 {
+    x - cell_width * (label_len.saturating_sub(1) as f64) / 2.0
 }
 
 /// Which column of the zone area the batter's label belongs in.
@@ -369,10 +305,6 @@ fn generate_strike_zone_area(area: Rect) -> Rect {
 mod tests {
     use super::*;
 
-    fn cell() -> CellSize {
-        CellSize::new(Rect::new(0, 0, 35, 19), [-14.5, 14.5], [10.0, 47.6])
-    }
-
     #[test]
     fn strike_zone_bounds_keep_a_compact_visible_margin() {
         let (x, y) = strike_zone_canvas_bounds(18.0, 39.6, []);
@@ -390,50 +322,34 @@ mod tests {
     }
 
     #[test]
-    fn a_crosshair_leaves_its_centre_clear() {
-        // the pitch number is printed in the middle, so no arm may cross it
-        let cell = cell();
-        let gap_x = cell.width * CROSSHAIR_GAP_CELLS;
-        let gap_y = cell.height * CROSSHAIR_GAP_CELLS;
-
-        // the arms end exactly on the gap boundary, so this needs a real tolerance
-        // rather than f64::EPSILON, which is far below the rounding of the arithmetic
-        const SLACK: f64 = 1e-9;
-
-        for line in crosshair(0.0, 30.0, Color::Red, cell) {
-            let horizontal = (line.y1 - line.y2).abs() < SLACK;
-            if horizontal {
-                assert!(
-                    line.x1.abs() >= gap_x - SLACK && line.x2.abs() >= gap_x - SLACK,
-                    "arm crosses the centre gap: {line:?}"
-                );
-            } else {
-                assert!(
-                    (line.y1 - 30.0).abs() >= gap_y - SLACK
-                        && (line.y2 - 30.0).abs() >= gap_y - SLACK,
-                    "arm crosses the centre gap: {line:?}"
-                );
-            }
-        }
+    fn a_marker_is_the_pitch_colour_filled_in() {
+        // reverse video: the pitch colour becomes the background so the chip reads
+        // against any heat map zone underneath it
+        let style = marker_style(Color::Rgb(170, 21, 11));
+        assert_eq!(style.bg, Some(Color::Rgb(170, 21, 11)));
+        assert_eq!(style.fg, Some(Color::White));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn a_crosshair_is_centred_on_the_pitch() {
-        // each arm is drawn twice, a half dot either side of true centre, so the
-        // pair straddles the exact coordinate rather than sitting beside it
-        let lines = crosshair(3.0, 30.0, Color::Red, cell());
-        let horizontal: Vec<f64> = lines
-            .iter()
-            .filter(|l| (l.y1 - l.y2).abs() < f64::EPSILON)
-            .map(|l| l.y1)
-            .collect();
-        let mean = horizontal.iter().sum::<f64>() / horizontal.len() as f64;
-        assert!((mean - 30.0).abs() < 1e-9, "off centre: {mean}");
+    fn a_marker_on_a_bright_pitch_colour_flips_to_black_text() {
+        assert_eq!(
+            marker_style(Color::Rgb(255, 255, 255)).fg,
+            Some(Color::Black)
+        );
     }
 
     #[test]
-    fn a_crosshair_has_four_arms_two_dots_thick() {
-        assert_eq!(crosshair(0.0, 30.0, Color::Red, cell()).len(), 8);
+    fn a_single_digit_marker_sits_on_the_pitch() {
+        assert_eq!(label_origin(4.0, 1, 0.83), 4.0);
+    }
+
+    #[test]
+    fn a_two_digit_marker_straddles_the_pitch() {
+        // print() anchors the left edge, so pitch 10 would otherwise sit half a cell
+        // right of where it actually crossed
+        assert_eq!(label_origin(4.0, 2, 0.8), 3.6);
+        assert_eq!(label_origin(4.0, 3, 0.8), 3.2);
     }
 
     #[test]
