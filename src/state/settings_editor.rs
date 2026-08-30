@@ -351,8 +351,12 @@ pub struct TvDelayOption {
     pub seconds: u16,
 }
 
-/// Broadcast delay choices. The middle three bracket a typical cable/streaming lag;
-/// 5s is for the near-live case (a radio call, or a stream that barely trails).
+/// Broadcast delay choices. 5s is the near-live case (a radio call, or a stream that
+/// barely trails); cable sits around 15-30s; a streaming feed is routinely 45-90s
+/// behind the field and MLB.TV can be worse, which is why the list runs to two
+/// minutes. The ceiling used to be 45s, and a feed further behind than that spoiled
+/// pitches no matter which option was picked — the buffer was working and the choices
+/// simply did not reach. Set it against the badge's measured figure, not by feel.
 #[rustfmt::skip]
 pub const TV_DELAY_OPTIONS: &[TvDelayOption] = &[
     TvDelayOption {label: "Off", picker_label: "Off (live)", seconds: 0},
@@ -360,6 +364,10 @@ pub const TV_DELAY_OPTIONS: &[TvDelayOption] = &[
     TvDelayOption {label: "15s", picker_label: "15 seconds", seconds: 15},
     TvDelayOption {label: "30s", picker_label: "30 seconds", seconds: 30},
     TvDelayOption {label: "45s", picker_label: "45 seconds", seconds: 45},
+    TvDelayOption {label: "60s", picker_label: "60 seconds", seconds: 60},
+    TvDelayOption {label: "75s", picker_label: "75 seconds", seconds: 75},
+    TvDelayOption {label: "90s", picker_label: "90 seconds", seconds: 90},
+    TvDelayOption {label: "120s", picker_label: "120 seconds", seconds: 120},
 ];
 
 #[rustfmt::skip]
@@ -424,7 +432,11 @@ mod tests {
             current = next_tv_delay(current);
             seen.push(current);
         }
-        assert_eq!(seen, vec![0, 5, 15, 30, 45, 0], "wraps back to off");
+        assert_eq!(
+            seen,
+            vec![0, 5, 15, 30, 45, 60, 75, 90, 120, 0],
+            "wraps back to off"
+        );
     }
 
     #[test]

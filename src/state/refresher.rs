@@ -20,7 +20,15 @@ impl PeriodicRefresher {
     }
 
     pub async fn run(mut self, app: std::sync::Arc<tokio::sync::Mutex<App>>) {
-        let mut live_interval = interval(Duration::from_secs(10)); // Live data every 10s
+        // Live data drives the broadcast-delay buffer, so the poll interval is also the
+        // delay's resolution: at 10s a "45s" delay really meant 45-55s and every release
+        // jumped the display forward by up to ten seconds of game at once. Read once —
+        // changing it takes a restart.
+        let live_poll = {
+            let app = app.lock().await;
+            app.settings.live_poll_interval()
+        };
+        let mut live_interval = interval(live_poll);
         let mut schedule_interval = interval(Duration::from_secs(30)); // Schedule every 30s
         let mut standings_interval = interval(Duration::from_secs(1800)); // Standings every 30 minutes
         let mut stats_interval = interval(Duration::from_secs(1800)); // Stats every 30 minutes
@@ -30,30 +38,35 @@ impl PeriodicRefresher {
             tokio::select! {
                 // Live game data updates (frequent for active games)
                 _ = live_interval.tick() => {
-                    let (active_tab, game_id, is_final) = {
+                    let (active_tab, target, delay_on) = {
                         let app = app.lock().await;
-                        (
-                            app.state.active_tab,
-                            app.state.gameday.current_game_id(),
-                            app.state.gameday.is_final(),
-                        )
+                        (app.state.active_tab, app.live_poll_target(), app.settings.tv_delay_on())
                     };
 
-                    if active_tab == MenuItem::Gameday && game_id > 0 && !is_final {
+                    // With a delay set, poll from either live screen: the buffer holds
+                    // per selected game, so keeping it warm on the Scoreboard is what
+                    // stops a switch to Gameday from staring at a countdown.
+                    let wants_live = active_tab == MenuItem::Gameday
+                        || (delay_on && active_tab == MenuItem::Scoreboard);
+                    if let Some(game_id) = target
+                        && wants_live
+                    {
                         let _ = self.network_requests.send(RefreshableRequest::force(NetworkRequest::GameData { game_id })).await;
                     }
                 }
 
                 // Schedule updates (moderate frequency)
                 _ = schedule_interval.tick() => {
-                    let (active_tab, date, game_id) = {
+                    let (active_tab, date, game_id, delay_on) = {
                         let app = app.lock().await;
-                        (app.state.active_tab, app.state.schedule.date_selector.date, app.state.schedule.get_selected_game_opt().unwrap_or(0))
+                        (app.state.active_tab, app.state.schedule.date_selector.date, app.state.schedule.get_selected_game_opt().unwrap_or(0), app.settings.tv_delay_on())
                     };
 
                     if active_tab == MenuItem::Scoreboard {
                         let _ = self.network_requests.send(RefreshableRequest::force(NetworkRequest::Schedule { date })).await;
-                        if game_id > 0 {
+                        // The live tick already covers game data when a delay is on;
+                        // asking again here would just be a duplicate fetch.
+                        if game_id > 0 && !delay_on {
                             let _ = self.network_requests.send(RefreshableRequest::force(NetworkRequest::GameData { game_id })).await;
                         }
                     }

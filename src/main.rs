@@ -134,6 +134,11 @@ async fn main_ui_loop(
 ) {
     let mut loading = LoadingState::default();
     let mut delay_release = tokio::time::interval(DELAY_RELEASE_INTERVAL);
+    // Last badge text drawn, so the release timer only repaints when the badge would
+    // actually change. The badge ticks every second in both phases; the timer fires
+    // twice as often, and a full Gameday repaint twice a second for an unchanged
+    // screen is not worth it.
+    let mut last_delay_status = None;
 
     loop {
         tokio::select! {
@@ -158,10 +163,13 @@ async fn main_ui_loop(
             _ = delay_release.tick() => {
                 let mut app_guard = app.lock().await;
                 let released = app_guard.release_due_live_data();
-                // While the buffer is cold the ui shows a countdown, so it needs to
-                // redraw as that ticks down. That state is transient by definition.
-                let counting_down = app_guard.tv_delay_status().is_some_and(|(_, c)| c.is_some());
-                if (released || counting_down) && !loading.is_loading {
+                // The badge counts down while the buffer is cold and reports the
+                // measured lag once it is warm, so it needs a repaint whenever its
+                // text moves — nothing else would wake the loop for it.
+                let status = app_guard.tv_delay_status();
+                let badge_changed = status != last_delay_status;
+                last_delay_status = status;
+                if (released || badge_changed) && !loading.is_loading {
                     draw::draw(&mut terminal, &mut app_guard, loading);
                 }
             }

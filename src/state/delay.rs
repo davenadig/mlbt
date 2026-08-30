@@ -21,11 +21,13 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Upper bound on held snapshots. The refresher polls live data every 10s and the
-/// longest offered delay is 45s, so a healthy buffer holds about five. The cap is
+/// Upper bound on held snapshots. The refresher polls live data every 3s and the
+/// longest offered delay is 120s, so a healthy buffer holds about forty. The cap is
 /// only a guard against a pathological burst; overflow drops the oldest, which is
 /// the entry that was about to be discarded anyway (see `take_due`).
-const MAX_BUFFERED: usize = 16;
+///
+/// Each entry is two `Arc`s, so a deep queue costs pointers, not payloads.
+const MAX_BUFFERED: usize = 128;
 
 /// A fetched-but-not-yet-displayed live snapshot.
 struct Buffered {
@@ -40,6 +42,20 @@ pub struct DelayBuffer {
     queue: VecDeque<Buffered>,
     /// game_pk of the snapshots in the queue, so a game switch can flush them.
     game_pk: Option<u64>,
+    /// When the snapshot currently on screen was fetched. This is what makes the
+    /// delay checkable rather than a matter of faith: the badge reports the real age
+    /// of what is displayed, so a delay that is not deep enough for the broadcast
+    /// shows up as a number instead of as a spoiled pitch.
+    displayed_at: Option<Instant>,
+}
+
+/// What the delay is doing right now, for the ui badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelayPhase {
+    /// Nothing shown for this game yet; seconds until the first snapshot is released.
+    Warming(u64),
+    /// Measured seconds between what is on screen and what the API last handed over.
+    Behind(u64),
 }
 
 /// What the caller should do with a snapshot handed to [`DelayBuffer::accept`].
@@ -66,11 +82,13 @@ impl DelayBuffer {
         // this the countdown would describe a game that is no longer on screen.
         if self.game_pk != Some(game.game_pk) {
             self.queue.clear();
+            self.displayed_at = None;
             self.game_pk = Some(game.game_pk);
         }
 
         if !should_delay(&game, delay) {
             self.queue.clear();
+            self.displayed_at = Some(fetched_at);
             return Accepted::Now(game, win_probability);
         }
 
@@ -106,7 +124,21 @@ impl DelayBuffer {
         for _ in 0..=due {
             newest = self.queue.pop_front();
         }
-        newest.map(|b| (b.game, b.win_probability))
+        newest.map(|b| {
+            self.displayed_at = Some(b.fetched_at);
+            (b.game, b.win_probability)
+        })
+    }
+
+    /// How far behind the API the display actually is, or `None` before the first
+    /// snapshot for this game has been shown.
+    ///
+    /// Measured, not assumed. The configured delay is a floor: the display is also
+    /// behind by however long ago the released snapshot was fetched, which is why the
+    /// poll interval wants to be short. Reporting the real figure is the only way to
+    /// tell "the delay is too shallow for this broadcast" from "the delay is broken".
+    pub fn displayed_age(&self, now: Instant) -> Option<Duration> {
+        Some(now.duration_since(self.displayed_at?))
     }
 
     /// Whole seconds until the next held snapshot is released, or `None` when
@@ -118,9 +150,21 @@ impl DelayBuffer {
         Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
     }
 
+    /// Pretend a snapshot fetched at `at` is on screen. Test-only seam so ui tests
+    /// can exercise the warm badge without standing up the whole network path.
+    #[cfg(test)]
+    pub fn set_displayed_at(&mut self, at: Instant) {
+        self.displayed_at = Some(at);
+    }
+
     #[cfg(test)]
     fn is_holding(&self) -> bool {
         !self.queue.is_empty()
+    }
+
+    #[cfg(test)]
+    fn depth(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -295,6 +339,97 @@ mod tests {
             buffer.seconds_until_release(DELAY, fetched + Duration::from_secs(30)),
             Some(0)
         );
+    }
+
+    #[test]
+    fn nothing_is_displayed_until_the_first_release() {
+        let mut buffer = DelayBuffer::default();
+        let fetched = Instant::now();
+        buffer.accept(response(1, AbstractGameState::Live), wp(), fetched, DELAY);
+        assert_eq!(
+            buffer.displayed_age(fetched + Duration::from_secs(10)),
+            None
+        );
+
+        buffer.take_due(DELAY, fetched + DELAY);
+        assert_eq!(
+            buffer.displayed_age(fetched + DELAY),
+            Some(DELAY),
+            "the released snapshot is exactly as old as the delay"
+        );
+    }
+
+    #[test]
+    fn displayed_age_is_the_delay_plus_however_stale_the_release_was() {
+        // this is the number the badge reports, and the reason it is worth reporting:
+        // the poll interval sits on top of the configured delay, so what is on screen
+        // is always a little further behind than the setting claims
+        let mut buffer = DelayBuffer::default();
+        let start = Instant::now();
+        for offset in [0, 3, 6] {
+            buffer.accept(
+                response(1, AbstractGameState::Live),
+                wp(),
+                start + Duration::from_secs(offset),
+                DELAY,
+            );
+        }
+
+        // at +32s only the snapshot fetched at 0 is due, and it is 32s old
+        buffer.take_due(DELAY, start + Duration::from_secs(32));
+        assert_eq!(
+            buffer.displayed_age(start + Duration::from_secs(32)),
+            Some(Duration::from_secs(32))
+        );
+    }
+
+    #[test]
+    fn a_game_switch_forgets_what_was_displayed() {
+        // the age belongs to a game, not to the screen; carrying it across a switch
+        // would report the previous game's lag for the new one
+        let mut buffer = DelayBuffer::default();
+        let fetched = Instant::now();
+        buffer.accept(response(1, AbstractGameState::Live), wp(), fetched, DELAY);
+        buffer.take_due(DELAY, fetched + DELAY);
+        assert!(buffer.displayed_age(fetched + DELAY).is_some());
+
+        buffer.accept(
+            response(2, AbstractGameState::Live),
+            wp(),
+            fetched + DELAY,
+            DELAY,
+        );
+        assert_eq!(buffer.displayed_age(fetched + DELAY), None);
+    }
+
+    #[test]
+    fn an_undelayed_game_reports_its_own_freshness() {
+        // a final game is applied straight through, so the badge should say ~0s rather
+        // than claim the configured delay it is not actually applying
+        let mut buffer = DelayBuffer::default();
+        let fetched = Instant::now();
+        buffer.accept(response(1, AbstractGameState::Final), wp(), fetched, DELAY);
+        assert_eq!(
+            buffer.displayed_age(fetched + Duration::from_secs(2)),
+            Some(Duration::from_secs(2))
+        );
+    }
+
+    #[test]
+    fn a_two_minute_delay_at_a_three_second_poll_fits_in_the_buffer() {
+        // 120s / 3s is forty snapshots; the cap has to clear that or the deepest delay
+        // would drop the very snapshots it is waiting on
+        let mut buffer = DelayBuffer::default();
+        let start = Instant::now();
+        for offset in (0..120).step_by(3) {
+            buffer.accept(
+                response(1, AbstractGameState::Live),
+                wp(),
+                start + Duration::from_secs(offset),
+                Duration::from_secs(120),
+            );
+        }
+        assert_eq!(buffer.depth(), 40, "nothing was dropped");
     }
 
     #[test]

@@ -8,6 +8,7 @@ use tui::{Frame, Terminal};
 use crate::app::{App, DebugState, MenuItem};
 use crate::components::debug::DebugInfo;
 use crate::components::stats::table::TeamOrPlayer;
+use crate::state::delay::DelayPhase;
 use crate::state::network::{ERROR_CHAR, LoadingState};
 use crate::state::settings_editor::SettingsFocus;
 use crate::state::stats::ActivePane;
@@ -364,13 +365,19 @@ fn hint_spans(hints: &[KeyHint]) -> Vec<Span<'static>> {
 ///
 /// This has to be visible somewhere permanent: a delayed display is indistinguishable
 /// from a stalled one, and the first thing anyone does with a screen that looks stuck
-/// is restart it. While the buffer is cold the badge also counts down, which is the
-/// only thing explaining an empty Gameday for up to 45 seconds after opening it.
+/// is restart it. While the buffer is cold the badge counts down, which is the only
+/// thing explaining an empty Gameday for up to a delay's worth of seconds after
+/// opening it.
+///
+/// Once warm it reads `DELAY 45s · 47s back` — the *measured* lag of what is on
+/// screen, not a repeat of the setting. Set the delay against that number: if the
+/// broadcast still gets spoiled while the badge reads honestly, the delay is too
+/// shallow for the feed, which is a different problem from the buffer not working.
 fn delay_badge_spans(app: &App) -> Option<Vec<Span<'static>>> {
-    let (label, countdown) = app.tv_delay_status()?;
-    let (color, text) = match countdown {
-        Some(seconds) => (DELAY_WARMING, format!("DELAY {label} · {seconds}s")),
-        None => (DELAY_STEADY, format!("DELAY {label}")),
+    let (label, phase) = app.tv_delay_status()?;
+    let (color, text) = match phase {
+        DelayPhase::Warming(seconds) => (DELAY_WARMING, format!("DELAY {label} · in {seconds}s")),
+        DelayPhase::Behind(seconds) => (DELAY_STEADY, format!("DELAY {label} · {seconds}s back")),
     };
     Some(vec![Span::styled(
         text,
@@ -676,13 +683,29 @@ mod tests {
     }
 
     #[test]
-    fn delay_badge_names_the_configured_delay() {
+    fn delay_badge_counts_down_before_anything_is_displayed() {
         let mut app = App::new();
         app.settings.tv_delay_seconds = 30;
-        // nothing held yet, so the badge is steady rather than counting
+        // nothing held and nothing displayed: the badge promises the full delay, which
+        // is what explains an empty Gameday to someone who just opened it
         let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "DELAY 30s");
+        assert_eq!(text, "DELAY 30s · in 30s");
+    }
+
+    #[test]
+    fn delay_badge_reports_the_measured_lag_once_warm() {
+        // the number that matters is how far behind the display actually is, not the
+        // setting — a 45s delay lands at 45s plus however stale the released snapshot
+        // was, and only the measured figure says whether it is deep enough
+        let mut app = App::new();
+        app.settings.tv_delay_seconds = 45;
+        app.state
+            .delay
+            .set_displayed_at(std::time::Instant::now() - std::time::Duration::from_secs(47));
+        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "DELAY 45s · 47s back");
     }
 
     #[test]
