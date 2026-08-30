@@ -6,7 +6,6 @@ use crate::components::linescore::LineScore;
 use crate::components::standings::Team;
 use indexmap::IndexMap;
 use mlbt_api::live::LiveResponse;
-use mlbt_api::plays::Play;
 use mlbt_api::schedule::AbstractGameState;
 use mlbt_api::win_probability::WinProbabilityResponse;
 use std::collections::HashMap;
@@ -52,7 +51,21 @@ impl GameState {
         self.current_at_bat = Self::get_current_play_ab_index(live_data);
         self.linescore = LineScore::from_live_data(live_data, &self.home_team, &self.away_team);
         if let Some(plays) = &live_data.live_data.plays.all_plays {
-            plays.iter().for_each(|p| Self::update_single_play(self, p));
+            // Rebuilt, not merged. `all_plays` is the complete play list for this
+            // snapshot, so the map should be a copy of it — inserting into the previous
+            // map instead let plays survive a snapshot that does not contain them, and
+            // the broadcast delay makes that visible: every play seen while the delay
+            // was off (or shallower) stayed in the feed when the display rewound, so
+            // the feed announced a home run while the at bat panel had not reached the
+            // batter yet. The feed was the only part of the screen that could not go
+            // backwards.
+            self.at_bats = plays
+                .iter()
+                .map(|play| {
+                    let at_bat = AtBat::from(play);
+                    (at_bat.index, at_bat)
+                })
+                .collect();
         }
         self.win_probability = WinProbability::from(win_probability);
     }
@@ -140,12 +153,6 @@ impl GameState {
             .as_ref()
             .map(|c| c.about.at_bat_index)
             .unwrap_or(0)
-    }
-
-    /// Useful for updating current play.
-    pub fn update_single_play(&mut self, play: &Play) {
-        let at_bat = AtBat::from(play);
-        self.at_bats.insert(at_bat.index, at_bat);
     }
 
     pub fn reset(&mut self) {

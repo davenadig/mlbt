@@ -56,6 +56,10 @@ pub enum DelayPhase {
     Warming(u64),
     /// Measured seconds between what is on screen and what the API last handed over.
     Behind(u64),
+    /// The game on screen is not live, so nothing is being held. Reporting a lag here
+    /// would be a lie that grows: a finished game stops being polled, so the last
+    /// snapshot just ages, and a badge counting up past the setting reads as stuck.
+    Idle,
 }
 
 /// What the caller should do with a snapshot handed to [`DelayBuffer::accept`].
@@ -64,6 +68,8 @@ pub enum Accepted {
     Now(Arc<LiveResponse>, Arc<WinProbabilityResponse>),
     /// It was queued. Nothing to display yet.
     Held,
+    /// Older than what is already on screen, so it was dropped. See `accept`.
+    Stale,
 }
 
 impl DelayBuffer {
@@ -86,17 +92,37 @@ impl DelayBuffer {
             self.game_pk = Some(game.game_pk);
         }
 
+        // Never move the display backwards. Not every response is freshly fetched: a
+        // request that is not a forced refresh can be served out of the network cache,
+        // which hands back a snapshot with its original `fetched_at` — older than one
+        // already shown. Applying it would rewind the screen mid-inning.
+        if self.displayed_at.is_some_and(|shown| fetched_at <= shown) {
+            return Accepted::Stale;
+        }
+
         if !should_delay(&game, delay) {
             self.queue.clear();
             self.displayed_at = Some(fetched_at);
             return Accepted::Now(game, win_probability);
         }
 
-        self.queue.push_back(Buffered {
-            fetched_at,
-            game,
-            win_probability,
-        });
+        // Insert by fetch time rather than arrival order. A cached response can arrive
+        // after a newer live one, and `take_due` reads the queue as sorted — an older
+        // entry at the back looks due before the entries in front of it and would take
+        // them down with it.
+        let at = self
+            .queue
+            .iter()
+            .rposition(|b| b.fetched_at <= fetched_at)
+            .map_or(0, |i| i + 1);
+        self.queue.insert(
+            at,
+            Buffered {
+                fetched_at,
+                game,
+                win_probability,
+            },
+        );
         while self.queue.len() > MAX_BUFFERED {
             self.queue.pop_front();
         }
@@ -430,6 +456,67 @@ mod tests {
             );
         }
         assert_eq!(buffer.depth(), 40, "nothing was dropped");
+    }
+
+    #[test]
+    fn a_cached_snapshot_that_arrives_late_does_not_jump_the_queue() {
+        // requests that are not forced refreshes can be served from the network cache,
+        // which returns the snapshot's original fetch time — so a snapshot older than
+        // the last one queued can arrive after it. `take_due` reads the queue as
+        // sorted, so an out of order entry at the back looks due before the entries in
+        // front of it and would release the wrong state and discard the newer ones.
+        let mut buffer = DelayBuffer::default();
+        let start = Instant::now();
+        let mut fresh = LiveResponse {
+            game_pk: 1,
+            ..Default::default()
+        };
+        fresh.game_data.status.abstract_game_state = Some(AbstractGameState::Live);
+        fresh.meta_data.wait = 99; // stand-in for "which snapshot"
+
+        buffer.accept(
+            Arc::new(fresh),
+            wp(),
+            start + Duration::from_secs(20),
+            DELAY,
+        );
+        // a cache hit from ten seconds earlier, arriving second
+        buffer.accept(
+            response(1, AbstractGameState::Live),
+            wp(),
+            start + Duration::from_secs(10),
+            DELAY,
+        );
+
+        let (released, _) = buffer
+            .take_due(DELAY, start + Duration::from_secs(55))
+            .expect("both are due");
+        assert_eq!(
+            released.meta_data.wait, 99,
+            "the newest snapshot is what reaches the screen"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_older_than_the_display_is_dropped() {
+        // the display only ever moves forward: rewinding mid inning would take the
+        // plays feed back past what the viewer has already read
+        let mut buffer = DelayBuffer::default();
+        let fetched = Instant::now();
+        buffer.accept(response(1, AbstractGameState::Live), wp(), fetched, DELAY);
+        buffer.take_due(DELAY, fetched + DELAY);
+
+        let accepted = buffer.accept(
+            response(1, AbstractGameState::Live),
+            wp(),
+            fetched - Duration::from_secs(5),
+            DELAY,
+        );
+        assert!(matches!(accepted, Accepted::Stale));
+        assert!(
+            !buffer.is_holding(),
+            "and it is not queued for later either"
+        );
     }
 
     #[test]

@@ -27,6 +27,16 @@ impl GamedayState {
         self.game.game_id
     }
 
+    /// Whether the broadcast delay applies to what is on screen. A `Preview` or
+    /// `Final` game is never held. `None` means nothing has been displayed yet, which
+    /// is exactly the case the delay is about to start holding for.
+    pub fn is_delayable(&self) -> bool {
+        !matches!(
+            self.game.abstract_game_state,
+            Some(AbstractGameState::Final | AbstractGameState::Preview)
+        )
+    }
+
     pub fn is_final(&self) -> bool {
         matches!(
             self.game.abstract_game_state,
@@ -358,6 +368,25 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn an_older_snapshot_takes_the_plays_feed_back_with_it() {
+        // the broadcast delay makes the display move backwards: turn it on (or deepen
+        // it) mid game and the next thing applied is a snapshot from before what is on
+        // screen. The play list used to be insert-only, so plays seen while the delay
+        // was off stayed in the feed after the rewind — the feed announced a home run
+        // while the at bat panel had not reached that batter yet, and it was the only
+        // part of the screen that could not go backwards.
+        let mut state = GamedayState::default();
+        let win_probability = WinProbabilityResponse::default();
+
+        state.update(&live_response(1, &[0, 1, 2, 3, 4], &[]), &win_probability);
+        assert_eq!(state.game.at_bats.len(), 5);
+
+        state.update(&live_response(1, &[0, 1, 2], &[]), &win_probability);
+        assert_eq!(state.game.at_bats.len(), 3, "the later plays are gone");
+        assert!(state.game.get_at_bat_by_index(4).is_none());
     }
 
     #[test]

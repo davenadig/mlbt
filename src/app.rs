@@ -251,7 +251,7 @@ impl App {
                 self.update_live_data(&game, &win_probability);
                 true
             }
-            Accepted::Held => false,
+            Accepted::Held | Accepted::Stale => false,
         }
     }
 
@@ -281,14 +281,18 @@ impl App {
         }
         let now = Instant::now();
         let label = tv_delay_label(self.settings.tv_delay_seconds);
-        let phase = match self.state.delay.displayed_age(now) {
-            Some(age) => DelayPhase::Behind(age.as_secs()),
-            None => DelayPhase::Warming(
-                self.state
-                    .delay
-                    .seconds_until_release(self.settings.tv_delay(), now)
-                    .unwrap_or(self.settings.tv_delay().as_secs()),
-            ),
+        let phase = if !self.state.gameday.is_delayable() {
+            DelayPhase::Idle
+        } else {
+            match self.state.delay.displayed_age(now) {
+                Some(age) => DelayPhase::Behind(age.as_secs()),
+                None => DelayPhase::Warming(
+                    self.state
+                        .delay
+                        .seconds_until_release(self.settings.tv_delay(), now)
+                        .unwrap_or(self.settings.tv_delay().as_secs()),
+                ),
+            }
         };
         Some((label, phase))
     }

@@ -378,6 +378,7 @@ fn delay_badge_spans(app: &App) -> Option<Vec<Span<'static>>> {
     let (color, text) = match phase {
         DelayPhase::Warming(seconds) => (DELAY_WARMING, format!("DELAY {label} · in {seconds}s")),
         DelayPhase::Behind(seconds) => (DELAY_STEADY, format!("DELAY {label} · {seconds}s back")),
+        DelayPhase::Idle => (DELAY_STEADY, format!("DELAY {label}")),
     };
     Some(vec![Span::styled(
         text,
@@ -655,6 +656,7 @@ fn draw_help(f: &mut Frame, rect: Rect, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mlbt_api::schedule::AbstractGameState;
 
     #[test]
     fn scoreboard_footer_surfaces_lineup_controls() {
@@ -706,6 +708,22 @@ mod tests {
         let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "DELAY 45s · 47s back");
+    }
+
+    #[test]
+    fn a_finished_game_reports_no_lag_at_all() {
+        // a final game is never held, and it stops being polled, so the last snapshot
+        // just gets older. Counting that up past the setting would read as a stall on a
+        // screen that is simply showing a game that is over.
+        let mut app = App::new();
+        app.settings.tv_delay_seconds = 45;
+        app.state.gameday.game.abstract_game_state = Some(AbstractGameState::Final);
+        app.state
+            .delay
+            .set_displayed_at(std::time::Instant::now() - std::time::Duration::from_secs(226));
+        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "DELAY 45s");
     }
 
     #[test]
