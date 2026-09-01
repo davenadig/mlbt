@@ -139,7 +139,10 @@ impl GameState {
         let idx = index.unwrap_or(self.current_at_bat);
         match self.get_at_bat_by_index(idx) {
             Some(at_bat) => (at_bat, idx == self.current_at_bat),
-            None => (self.get_latest_at_bat(), true),
+            // Only a caller that asked for "whatever is live" gets the live flag back. A
+            // specific index that has gone missing must not silently re-open the panels
+            // that are gated on being live.
+            None => (self.get_latest_at_bat(), index.is_none()),
         }
     }
 

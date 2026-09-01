@@ -49,7 +49,7 @@ pub struct Matchup {
     pub bat_side: BatterSide,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Runners {
     pub first: bool,
     pub second: bool,
@@ -70,7 +70,7 @@ impl Runners {
 
     /// Generate two lines, one for second base and one for first and third. Second base is shown
     /// on a line above first and third.
-    pub fn generate_lines(&self) -> (Line<'_>, Line<'_>) {
+    pub fn generate_lines(&self) -> (Line<'static>, Line<'static>) {
         let second_base = match self.second {
             true => format!("  {}  ", Self::ON_BASE_CHAR),
             false => format!("  {}  ", Self::EMPTY_BASE_CHAR),
@@ -210,28 +210,38 @@ impl Matchup {
         }
         lines
     }
+}
 
-    pub fn format_scoreboard_lines(&self) -> Vec<Line<'_>> {
-        let outs = match self.count.outs {
-            0 => "◯ ◯ ◯",
-            1 => "● ◯ ◯",
-            2 => "● ● ◯",
-            3 => "● ● ●",
-            _ => "",
-        };
-        let arrow = if self.is_top { "▲" } else { "▼" };
-        let (second_base, first_third) = self.runners.generate_lines();
+/// The four scoreboard rows: score and inning, the two base rows, and the outs.
+///
+/// Takes the pieces rather than a `Matchup` because a `Matchup`'s score, count and runners
+/// are all *end of play* values. Rendering those while standing on the second pitch of the
+/// at bat announces the play before it happens, which is the whole thing Gameday's cursor
+/// exists to prevent — so the caller passes the state as of the pitch it is showing.
+pub fn format_scoreboard_lines<'a>(
+    away_score: u8,
+    home_score: u8,
+    inning: u8,
+    is_top: bool,
+    outs: u8,
+    runners: Runners,
+) -> Vec<Line<'a>> {
+    let outs = match outs {
+        0 => "◯ ◯ ◯",
+        1 => "● ◯ ◯",
+        2 => "● ● ◯",
+        3 => "● ● ●",
+        _ => "",
+    };
+    let arrow = if is_top { "▲" } else { "▼" };
+    let (second_base, first_third) = runners.generate_lines();
 
-        vec![
-            Line::from(format!(
-                "{}    {} {}    {}",
-                self.away_score, arrow, self.inning, self.home_score
-            )),
-            second_base,
-            first_third,
-            Line::from(outs),
-        ]
-    }
+    vec![
+        Line::from(format!("{away_score}    {arrow} {inning}    {home_score}")),
+        second_base,
+        first_third,
+        Line::from(outs),
+    ]
 }
 
 #[cfg(test)]

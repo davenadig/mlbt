@@ -1,10 +1,10 @@
 use crate::app::MenuItem;
 use crate::components::game::live_game::{AtBatIndex, GameState};
+use crate::components::game::reveal::{Cursor, at_bat_complete};
 use crate::components::game::win_probability::WinProbabilityAtBat;
 use crate::components::standings::Team;
 use crate::ui::gameday::plays::{BLUE, GREEN};
 use crate::ui::styling::{TEXT_COLOR, border_style, header_style, selected_style};
-use indexmap::IndexMap;
 use tui::prelude::*;
 use tui::widgets::{
     Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, GraphType, Row, Table,
@@ -15,11 +15,32 @@ type ChartPoint = (f64, f64);
 pub struct WinProbabilityWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
+    pub cursor: Option<Cursor>,
     pub active_tab: MenuItem,
 }
 
+impl WinProbabilityWidget<'_> {
+    /// The newest at bat whose win probability the viewer has earned the right to see.
+    ///
+    /// A row carries the swing the play produced, so the row *below* the selection is a
+    /// louder spoiler than anything else on the tab — "next play: 99%" gives away a game.
+    /// The at bat under the cursor only qualifies once its last pitch has been walked to.
+    fn revealed_limit(&self) -> Option<AtBatIndex> {
+        let cursor = self.cursor?;
+        match self.game.get_at_bat_by_index(cursor.at_bat) {
+            Some(at_bat) if at_bat_complete(at_bat, Some(cursor)) => Some(cursor.at_bat),
+            // saturating: on the first at bat of the game there is nothing to show yet, and
+            // index 0 would wrongly reveal that very at bat
+            Some(_) => Some(cursor.at_bat.saturating_sub(1)),
+            None => Some(cursor.at_bat),
+        }
+    }
+}
+
 struct WinProbabilityData<'a> {
-    at_bats: &'a IndexMap<AtBatIndex, WinProbabilityAtBat>,
+    /// The rows that may be drawn, oldest first. Materialised rather than borrowed whole so
+    /// the windowing below cannot accidentally reach past the cursor.
+    at_bats: Vec<&'a WinProbabilityAtBat>,
     home_team: Team,
     away_team: Team,
     selected_at_bat_index: Option<AtBatIndex>,
@@ -43,14 +64,21 @@ impl Widget for WinProbabilityWidget<'_> {
                 .horizontal_margin(2)
                 .vertical_margin(1)
                 .areas(area);
-                let data = WinProbabilityData::new(self.game, self.selected_at_bat, chart.height);
+                // The Scoreboard tab is not walked, so it keeps the whole game.
+                let data =
+                    WinProbabilityData::new(self.game, self.selected_at_bat, None, chart.height);
                 data.render_line_chart(chart, buf);
             }
             MenuItem::Gameday => {
                 let [table, chart] =
                     Layout::horizontal([Constraint::Length(30), Constraint::Fill(1)].as_ref())
                         .areas(area);
-                let data = WinProbabilityData::new(self.game, self.selected_at_bat, table.height);
+                let data = WinProbabilityData::new(
+                    self.game,
+                    self.selected_at_bat,
+                    self.revealed_limit(),
+                    table.height,
+                );
                 data.render_table(table, buf);
                 data.render_chart(chart, buf);
             }
@@ -63,9 +91,20 @@ impl<'a> WinProbabilityData<'a> {
     const INTERPOLATION_TARGET_COUNT: usize = 50;
     const MINIMUM_TABLE_HEIGHT: usize = 10;
 
-    fn new(game: &'a GameState, selected_at_bat_index: Option<u8>, table_height: u16) -> Self {
+    fn new(
+        game: &'a GameState,
+        selected_at_bat_index: Option<u8>,
+        limit: Option<AtBatIndex>,
+        table_height: u16,
+    ) -> Self {
         Self {
-            at_bats: &game.win_probability.at_bats,
+            at_bats: game
+                .win_probability
+                .at_bats
+                .iter()
+                .filter(|(index, _)| limit.is_none_or(|limit| **index <= limit))
+                .map(|(_, at_bat)| at_bat)
+                .collect(),
             // summary: &game.summary,
             selected_at_bat_index,
             home_team: game.home_team,
@@ -136,7 +175,7 @@ impl<'a> WinProbabilityData<'a> {
 
         let visible_rows: Vec<Row> = self
             .at_bats
-            .values()
+            .iter()
             .rev() // newest first
             .skip(start_idx)
             .take(end_idx - start_idx)
@@ -190,7 +229,7 @@ impl<'a> WinProbabilityData<'a> {
 
         let bars: Vec<Bar> = self
             .at_bats
-            .values()
+            .iter()
             .rev() // newest first
             .skip(start_idx)
             .take(end_idx - start_idx)
@@ -214,8 +253,9 @@ impl<'a> WinProbabilityData<'a> {
 
     fn get_selected_position(&self) -> Option<usize> {
         let selected_ab = self.selected_at_bat_index?;
-        // since IndexMap maintains order and at_bat_index is the key, we can use get_index_of
-        self.at_bats.get_index_of(&selected_ab)
+        self.at_bats
+            .iter()
+            .position(|at_bat| at_bat.at_bat_index == selected_ab)
     }
 
     /// Calculate the number of rows the should be visible for both the bar chart and the table.
@@ -297,7 +337,7 @@ impl<'a> WinProbabilityData<'a> {
     fn prepare_chart_data(&self) -> (Vec<ChartPoint>, f64) {
         let mut points: Vec<ChartPoint> = self
             .at_bats
-            .values()
+            .iter()
             .map(|at_bat| {
                 (
                     at_bat.at_bat_index as f64,
@@ -313,7 +353,7 @@ impl<'a> WinProbabilityData<'a> {
         // Add 1.0 to the max index for better padding on the chart.
         let x_axis_bounds = self
             .at_bats
-            .values()
+            .iter()
             .last()
             .map_or(0.0, |ab| ab.at_bat_index as f64 + 1.0);
 
@@ -362,7 +402,7 @@ impl<'a> WinProbabilityData<'a> {
         let mut inning_lines = Vec::new();
         let mut prev_state = None;
 
-        for at_bat in self.at_bats.values() {
+        for at_bat in &self.at_bats {
             let current_state = (at_bat.inning, at_bat.is_top_inning);
 
             if let Some(prev) = prev_state

@@ -4,8 +4,9 @@ use crate::components::standings::Team;
 use crate::ui::gameday::plays::{BLUE, SCORING_SYMBOL, build_scoring_span};
 use tui::prelude::{Line, Span, Style};
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
 pub enum PitchEventType {
+    #[default]
     Pitch,
     Running,
     /// pickoff attempt, mound visit, pinch hitter, etc
@@ -21,7 +22,7 @@ pub struct HitData {
     pub hardness: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PitchEvent {
     pub event_type: PitchEventType,
     pub description: String,

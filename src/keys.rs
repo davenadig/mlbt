@@ -233,14 +233,17 @@ pub async fn handle_key_bindings(
         (MenuItem::Gameday, Char('K') | KeyCode::Up, KeyModifiers::SHIFT) => {
             guard.state.box_score.scroll_up()
         }
-        // Left/right walk the game one at bat at a time: Gameday opens at inning 1, batter 1, so
-        // catching up to a broadcast is a run of right arrows that you stop before it spoils.
+        // Left/right walk the game one *pitch* at a time: Gameday opens at inning 1, batter 1,
+        // pitch 1, so catching up to a broadcast is a run of right arrows that you stop before
+        // it spoils. `]`/`[` are the coarse gear, an at bat per press.
         (MenuItem::Gameday, Char('j') | KeyCode::Down | KeyCode::Left, _) => {
-            guard.state.gameday.previous_at_bat()
+            guard.state.gameday.previous_pitch()
         }
         (MenuItem::Gameday, Char('k') | KeyCode::Up | KeyCode::Right, _) => {
-            guard.state.gameday.next_at_bat()
+            guard.state.gameday.next_pitch()
         }
+        (MenuItem::Gameday, Char(']'), _) => guard.state.gameday.next_at_bat(),
+        (MenuItem::Gameday, Char('['), _) => guard.state.gameday.previous_at_bat(),
         (MenuItem::Gameday, Char('l'), _) => guard.state.gameday.live(),
         (MenuItem::Gameday, Char('s'), _) => guard.state.gameday.start(),
         (MenuItem::Gameday, Char('!'), _) => guard.state.gameday.toggle_scoring_plays_only(),

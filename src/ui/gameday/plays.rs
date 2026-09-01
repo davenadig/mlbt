@@ -1,5 +1,6 @@
 use crate::components::game::live_game::GameState;
 use crate::components::game::plays::PlayResult;
+use crate::components::game::reveal::{Cursor, at_bat_complete, is_revealed};
 use crate::ui::scroll::render_scrollbar;
 use crate::ui::styling::TEXT_COLOR;
 use std::vec;
@@ -19,6 +20,7 @@ pub const SELECTION_SYMBOL: char = '>';
 pub struct InningPlaysWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
+    pub cursor: Option<Cursor>,
     pub scoring_only: bool,
     pub scroll_offset: &'a mut u16,
     pub scroll_state: &'a mut ScrollbarState,
@@ -26,8 +28,12 @@ pub struct InningPlaysWidget<'a> {
 
 impl Widget for InningPlaysWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let (lines, selected_idx) =
-            format_plays(self.game, self.selected_at_bat, self.scoring_only);
+        let (lines, selected_idx) = format_plays(
+            self.game,
+            self.selected_at_bat,
+            self.cursor,
+            self.scoring_only,
+        );
 
         let content_height = measure(&lines, area.width);
         let paragraph = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
@@ -94,6 +100,7 @@ fn measure(lines: &[Line<'_>], width: u16) -> u16 {
 fn format_plays(
     game: &GameState,
     selected_at_bat: Option<u8>,
+    cursor: Option<Cursor>,
     scoring_only: bool,
 ) -> (Vec<Line<'_>>, Option<usize>) {
     let (at_bat, _is_current) = game.get_at_bat_by_index_or_current(selected_at_bat);
@@ -111,6 +118,13 @@ fn format_plays(
 
     for play in game.at_bats.values().rev() {
         let current_inning = (play.is_top_inning, play.inning);
+        // The feed reads a whole inning at a time, which includes the half you have not
+        // watched yet — the bottom of the inning you are still in the top of. Nothing past
+        // the cursor belongs on screen, and the at bat the cursor is *inside* only earns its
+        // line once its last pitch has been walked to.
+        if !is_revealed(play.index, cursor) || !at_bat_complete(play, cursor) {
+            continue;
+        }
         if scoring_only {
             if !play.play_result.is_scoring_play {
                 continue;

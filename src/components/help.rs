@@ -34,7 +34,7 @@ const SCOREBOARD_DOCS: &[&[&str; 2]; 10] = &[
     &["Toggle win probability", "w"],
     &["Toggle sort mode", "s"],
 ];
-const GAMEDAY_DOCS: &[&[&str; 2]; 15] = &[
+const GAMEDAY_DOCS: &[&[&str; 2]; 17] = &[
     &["Gameday", "2"],
     &["Toggle game info", "i"],
     &["Toggle pitches", "p"],
@@ -45,10 +45,12 @@ const GAMEDAY_DOCS: &[&[&str; 2]; 15] = &[
     &["Toggle win probability", "w"],
     &["Toggle pitch tracker", "n"],
     &["Toggle spin/break", "m"],
-    &["Previous at bat", "←/j/↓"],
-    &["Next at bat", "→/k/↑"],
+    &["Previous pitch", "←/j/↓"],
+    &["Next pitch", "→/k/↑"],
+    &["Previous at bat", "["],
+    &["Next at bat", "]"],
     &["Go to live at bat", "l"],
-    &["Go to first at bat", "s"],
+    &["Go to first pitch", "s"],
     &["Toggle scoring plays only", "!"],
 ];
 const STATS_DOCS: &[&[&str; 2]; 17] = &[

@@ -79,6 +79,10 @@ impl Default for Pitch {
 pub struct Count {
     pub balls: u8,
     pub strikes: u8,
+    /// Outs at the time of the pitch. The API reports this *before* the pitch resolves —
+    /// a strikeout's third strike still reads the outs it was thrown with — which is
+    /// what the scoreboard wants while walking an at bat pitch by pitch.
+    pub outs: u8,
 }
 
 impl From<mlbt_api::plays::Count> for Count {
@@ -86,6 +90,7 @@ impl From<mlbt_api::plays::Count> for Count {
         Self {
             balls: value.balls,
             strikes: value.strikes,
+            outs: value.outs,
         }
     }
 }

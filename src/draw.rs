@@ -563,6 +563,7 @@ fn draw_win_probability(f: &mut Frame, rect: Rect, app: &mut App) {
     if rect.height > minimum_size as u16 {
         f.render_widget(
             WinProbabilityWidget {
+                cursor: None,
                 game: &app.state.gameday.game,
                 selected_at_bat: app.state.gameday.selected_at_bat(),
                 active_tab: MenuItem::Scoreboard,

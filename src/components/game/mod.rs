@@ -6,6 +6,7 @@ pub mod pitch_tracker;
 pub mod pitches;
 pub mod player;
 pub mod plays;
+pub mod reveal;
 mod review;
 pub mod strikezone;
 pub mod win_probability;

@@ -1,4 +1,6 @@
 use crate::components::game::live_game::GameState;
+use crate::components::game::matchup::format_scoreboard_lines;
+use crate::components::game::reveal::{Cursor, situation_at};
 use crate::ui::styling::border_style;
 use tui::prelude::*;
 use tui::widgets::{Block, Borders, Padding, Paragraph};
@@ -6,6 +8,7 @@ use tui::widgets::{Block, Borders, Padding, Paragraph};
 pub struct MatchupWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
+    pub cursor: Option<Cursor>,
 }
 
 impl Widget for MatchupWidget<'_> {
@@ -13,6 +16,11 @@ impl Widget for MatchupWidget<'_> {
         let (at_bat, is_current) = self
             .game
             .get_at_bat_by_index_or_current(self.selected_at_bat);
+        let situation = situation_at(self.game, at_bat, self.cursor);
+        // A player's game line comes from the boxscore, which is cumulative and live: a
+        // pitcher's pitch count and a batter's 2-for-3 are both true *now*, not as of the
+        // pitch on screen. They are only safe once the viewer has caught up.
+        let live_details = is_current && self.cursor.is_none();
 
         let [matchup, on_deck] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
@@ -30,7 +38,7 @@ impl Widget for MatchupWidget<'_> {
                 self.game.away_team.team_name,
                 self.game.away_abs_challenges,
                 false,
-                is_current,
+                live_details,
                 &self.game.players,
             ))
             .alignment(Alignment::Left)
@@ -44,14 +52,21 @@ impl Widget for MatchupWidget<'_> {
             buf,
         );
         Widget::render(
-            Paragraph::new(at_bat.matchup.format_scoreboard_lines())
-                .alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(Borders::BOTTOM)
-                        .border_style(border_style())
-                        .padding(Padding::new(0, 0, 1, 0)),
-                ),
+            Paragraph::new(format_scoreboard_lines(
+                situation.away_score,
+                situation.home_score,
+                situation.inning,
+                situation.is_top,
+                situation.outs,
+                situation.runners,
+            ))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(border_style())
+                    .padding(Padding::new(0, 0, 1, 0)),
+            ),
             scoreboard,
             buf,
         );
@@ -60,7 +75,7 @@ impl Widget for MatchupWidget<'_> {
                 self.game.home_team.team_name,
                 self.game.home_abs_challenges,
                 true,
-                is_current,
+                live_details,
                 &self.game.players,
             ))
             .alignment(Alignment::Right)

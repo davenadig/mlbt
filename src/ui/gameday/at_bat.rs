@@ -1,5 +1,6 @@
 use crate::components::game::live_game::GameState;
 use crate::components::game::matchup::BatterSide;
+use crate::components::game::reveal::{Cursor, revealed_events};
 use crate::components::game::strikezone::{
     DEFAULT_SZ_BOT, DEFAULT_SZ_TOP, HOME_PLATE_WIDTH, StrikeZone,
 };
@@ -12,6 +13,7 @@ use tui::widgets::{Block, Borders, Paragraph, Wrap};
 pub struct AtBatWidget<'a> {
     pub game: &'a GameState,
     pub selected_at_bat: Option<u8>,
+    pub cursor: Option<Cursor>,
     pub show_pitch_tracker: bool,
     pub show_movement: bool,
 }
@@ -22,6 +24,11 @@ impl Widget for AtBatWidget<'_> {
             .game
             .get_at_bat_by_index_or_current(self.selected_at_bat);
         let pitches = &at_bat.pitches;
+        // Everything below draws from `events`, never the whole at bat: the zone scale, the
+        // markers, the event list and the hit data all leak the rest of the at bat otherwise.
+        // The canvas bounds in particular — sizing the axis to a pitch that has not been
+        // revealed stretches the chart around a spot nothing is drawn on yet.
+        let events = revealed_events(at_bat, self.cursor);
 
         let [kzone, hit, pitch_info] = Layout::vertical([
             Constraint::Percentage(65), // heatmap/pitches
@@ -49,7 +56,7 @@ impl Widget for AtBatWidget<'_> {
         // grab the strike zone from the first pitch since it doesn't change during the at bat.
         let mut strike_zone_bot = DEFAULT_SZ_BOT * 12.0;
         let mut strike_zone_top = DEFAULT_SZ_TOP * 12.0;
-        for pe in &pitches.pitches.pitch_events {
+        for pe in events {
             if let Some(pitch) = pe.pitch.as_ref() {
                 strike_zone_bot = pitch.strike_zone_bot * 12.0;
                 strike_zone_top = pitch.strike_zone_top * 12.0;
@@ -59,9 +66,7 @@ impl Widget for AtBatWidget<'_> {
         let height = strike_zone_top - strike_zone_bot;
         let coords = StrikeZone::build_coords(strike_zone_bot, strike_zone_top);
         let strike_zone_area = generate_strike_zone_area(kzone);
-        let pitch_locations = pitches
-            .pitches
-            .pitch_events
+        let pitch_locations = events
             .iter()
             .filter_map(|event| event.pitch.as_ref().map(|pitch| pitch.plot_position()));
         let (x_bounds, y_bounds) =
@@ -85,7 +90,7 @@ impl Widget for AtBatWidget<'_> {
                     };
                     ctx.draw(&r);
                 }
-                for pe in &pitches.pitches.pitch_events {
+                for pe in events {
                     if let Some(pitch) = &pe.pitch {
                         let (x, y) = pitch.plot_position();
                         let label = pitch.index.to_string();
@@ -116,14 +121,13 @@ impl Widget for AtBatWidget<'_> {
             PitchTrackerWidget {
                 game: self.game,
                 at_bat_index: at_bat.index,
+                through_pitch: self.cursor.map(|c| c.pitch),
             }
             .render(tracker_area, buf);
         }
 
         // display the event information
-        let events: Vec<Line> = pitches
-            .pitches
-            .pitch_events
+        let lines: Vec<Line> = events
             .iter()
             .rev() // reverse so that the last event is at the top
             .filter_map(|event| {
@@ -138,7 +142,7 @@ impl Widget for AtBatWidget<'_> {
             .flatten()
             .collect();
 
-        let paragraph = Paragraph::new(events).wrap(Wrap { trim: false }).block(
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::TOP)
                 .border_style(border_style()),
@@ -146,7 +150,7 @@ impl Widget for AtBatWidget<'_> {
         Widget::render(paragraph, pitch_info, buf);
 
         // display the hit information if available
-        if let Some(data) = pitches.pitches.pitch_events.last()
+        if let Some(data) = events.last()
             && let Some(text) = data.format_hit_data()
         {
             let paragraph = Paragraph::new(text)

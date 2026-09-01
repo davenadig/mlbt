@@ -27,11 +27,16 @@ pub fn fits_beside_zone(available_width: u16) -> bool {
 pub struct PitchTrackerWidget<'a> {
     pub game: &'a GameState,
     pub at_bat_index: u8,
+    /// Inclusive event index the viewer has walked to within `at_bat_index`, if behind live.
+    pub through_pitch: Option<usize>,
 }
 
 impl Widget for PitchTrackerWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let Some(totals) = self.game.pitcher_totals_through(self.at_bat_index) else {
+        let Some(totals) = self
+            .game
+            .pitcher_totals_through(self.at_bat_index, self.through_pitch)
+        else {
             return;
         };
 

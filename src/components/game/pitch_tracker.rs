@@ -56,7 +56,15 @@ impl GameState {
     /// Returns `None` when the at bat is unknown or has no pitcher yet (a game that
     /// has not started), so the caller can leave the column empty rather than render
     /// a row of zeroes that looks like real data.
-    pub fn pitcher_totals_through(&self, through_index: u8) -> Option<PitcherTotals> {
+    ///
+    /// `through_pitch` cuts the viewed at bat short at the pitch the cursor is on, so the
+    /// column counts what has actually been watched. Without it the totals run a whole at
+    /// bat ahead — a pitcher's count jumping by four before those four are on the chart.
+    pub fn pitcher_totals_through(
+        &self,
+        through_index: u8,
+        through_pitch: Option<usize>,
+    ) -> Option<PitcherTotals> {
         let pitcher_id = self.get_at_bat_by_index(through_index)?.matchup.pitcher_id;
         if pitcher_id == 0 {
             return None;
@@ -74,7 +82,14 @@ impl GameState {
             .filter(|(index, at_bat)| {
                 **index <= through_index && at_bat.matchup.pitcher_id == pitcher_id
             })
-            .flat_map(|(_, at_bat)| at_bat.pitches.pitches.pitch_events.iter())
+            .flat_map(|(index, at_bat)| {
+                let events = &at_bat.pitches.pitches.pitch_events;
+                let end = match through_pitch {
+                    Some(pitch) if *index == through_index => (pitch + 1).min(events.len()),
+                    _ => events.len(),
+                };
+                events[..end].iter()
+            })
             .filter_map(|event| event.pitch.as_ref());
 
         for pitch in relevant {
@@ -205,7 +220,7 @@ mod tests {
             (1, 100, vec![pitch("FF", 97.0, true)]),
         ]);
 
-        let totals = game.pitcher_totals_through(1).unwrap();
+        let totals = game.pitcher_totals_through(1, None).unwrap();
         assert_eq!(totals.pitches, 3);
         assert_eq!(totals.strikes, 2);
         assert_eq!(totals.types[0].code, "FF");
@@ -225,7 +240,7 @@ mod tests {
             (1, 200, vec![pitch("SL", 84.0, false)]),
         ]);
 
-        let reliever = game.pitcher_totals_through(1).unwrap();
+        let reliever = game.pitcher_totals_through(1, None).unwrap();
         assert_eq!(reliever.pitcher_id, 200);
         assert_eq!(reliever.pitches, 1, "only his own pitch");
     }
@@ -240,8 +255,8 @@ mod tests {
             (2, 100, vec![pitch("FF", 97.0, true)]),
         ]);
 
-        assert_eq!(game.pitcher_totals_through(0).unwrap().pitches, 1);
-        assert_eq!(game.pitcher_totals_through(2).unwrap().pitches, 3);
+        assert_eq!(game.pitcher_totals_through(0, None).unwrap().pitches, 1);
+        assert_eq!(game.pitcher_totals_through(2, None).unwrap().pitches, 3);
     }
 
     #[test]
@@ -252,7 +267,7 @@ mod tests {
             vec![pitch("FF", 95.0, true), running_event()],
         )]);
 
-        assert_eq!(game.pitcher_totals_through(0).unwrap().pitches, 1);
+        assert_eq!(game.pitcher_totals_through(0, None).unwrap().pitches, 1);
     }
 
     #[test]
@@ -268,7 +283,7 @@ mod tests {
             ],
         )]);
 
-        let totals = game.pitcher_totals_through(0).unwrap();
+        let totals = game.pitcher_totals_through(0, None).unwrap();
         assert_eq!(totals.types[0].share, 75.0);
         assert_eq!(totals.types[1].share, 25.0);
         assert_eq!(totals.strike_share(), 75.0);
@@ -284,7 +299,7 @@ mod tests {
             vec![pitch("FF", 96.0, true), pitch("FF", 0.0, true)],
         )]);
 
-        let totals = game.pitcher_totals_through(0).unwrap();
+        let totals = game.pitcher_totals_through(0, None).unwrap();
         assert_eq!(totals.types[0].count, 2, "still counts as a pitch");
         assert_eq!(totals.types[0].avg_speed, 96.0);
     }
@@ -297,7 +312,7 @@ mod tests {
             vec![pitch("UNKNOWN", 90.0, true), pitch("", 90.0, true)],
         )]);
 
-        let totals = game.pitcher_totals_through(0).unwrap();
+        let totals = game.pitcher_totals_through(0, None).unwrap();
         assert_eq!(totals.types.len(), 1, "both collapse to one bucket");
         assert_eq!(totals.types[0].code, UNCLASSIFIED);
     }
@@ -314,7 +329,7 @@ mod tests {
             ],
         )]);
 
-        let totals = game.pitcher_totals_through(0).unwrap();
+        let totals = game.pitcher_totals_through(0, None).unwrap();
         let codes: Vec<&str> = totals.types.iter().map(|t| t.code.as_str()).collect();
         assert_eq!(codes, vec!["FF", "CH"]);
     }
@@ -322,14 +337,14 @@ mod tests {
     #[test]
     fn an_unknown_at_bat_has_no_totals() {
         let game = game_with(vec![]);
-        assert!(game.pitcher_totals_through(0).is_none());
+        assert!(game.pitcher_totals_through(0, None).is_none());
     }
 
     #[test]
     fn a_pitcher_who_has_not_thrown_yet_reports_zero_rather_than_nothing() {
         // the column should say "0 P" for a fresh reliever, not vanish
         let game = game_with(vec![(0, 100, vec![])]);
-        let totals = game.pitcher_totals_through(0).unwrap();
+        let totals = game.pitcher_totals_through(0, None).unwrap();
         assert_eq!(totals.pitches, 0);
         assert!(totals.types.is_empty());
         assert_eq!(totals.strike_share(), 0.0);
