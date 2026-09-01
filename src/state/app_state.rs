@@ -3,7 +3,6 @@ use crate::components::schedule::ScheduleState;
 use crate::components::standings::StandingsState;
 use crate::state::boxscore::BoxscoreState;
 use crate::state::date_input::DateInput;
-use crate::state::delay::DelayBuffer;
 use crate::state::gameday::GamedayState;
 use crate::state::help::HelpState;
 use crate::state::settings_editor::SettingsEditorState;
@@ -26,8 +25,6 @@ pub struct AppState {
     pub date_input: DateInput,
     pub schedule: ScheduleState,
     pub gameday: GamedayState,
-    /// Live snapshots held back so the display trails a television broadcast.
-    pub delay: DelayBuffer,
     pub box_score: BoxscoreState,
     pub standings: StandingsState,
     pub stats: StatsState,

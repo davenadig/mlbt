@@ -22,7 +22,7 @@ const GENERAL_DOCS: &[&[&str; 2]; 9] = &[
     &["Focus settings", "Tab"],
     &["Change setting", "Enter"],
 ];
-const SCOREBOARD_DOCS: &[&[&str; 2]; 11] = &[
+const SCOREBOARD_DOCS: &[&[&str; 2]; 10] = &[
     &["Scoreboard", "1"],
     &["Move down", "j/↓"],
     &["Move up", "k/↑"],
@@ -33,9 +33,8 @@ const SCOREBOARD_DOCS: &[&[&str; 2]; 11] = &[
     &["Scroll boxscore up", "Shift + k/↑"],
     &["Toggle win probability", "w"],
     &["Toggle sort mode", "s"],
-    &["Cycle TV delay", "t"],
 ];
-const GAMEDAY_DOCS: &[&[&str; 2]; 16] = &[
+const GAMEDAY_DOCS: &[&[&str; 2]; 15] = &[
     &["Gameday", "2"],
     &["Toggle game info", "i"],
     &["Toggle pitches", "p"],
@@ -46,12 +45,11 @@ const GAMEDAY_DOCS: &[&[&str; 2]; 16] = &[
     &["Toggle win probability", "w"],
     &["Toggle pitch tracker", "n"],
     &["Toggle spin/break", "m"],
-    &["Move down at bat", "j/↓"],
-    &["Move up at bat", "k/↑"],
+    &["Previous at bat", "←/j/↓"],
+    &["Next at bat", "→/k/↑"],
     &["Go to live at bat", "l"],
     &["Go to first at bat", "s"],
     &["Toggle scoring plays only", "!"],
-    &["Cycle TV delay", "t"],
 ];
 const STATS_DOCS: &[&[&str; 2]; 17] = &[
     &["Stats", "3"],

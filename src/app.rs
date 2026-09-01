@@ -1,9 +1,8 @@
 use crate::config::TomlFileStore;
 use crate::state::app_settings::AppSettings;
 use crate::state::app_state::AppState;
-use crate::state::delay::{Accepted, DelayPhase};
 use crate::state::messages::NetworkRequest;
-use crate::state::settings_editor::{SettingsStatus, next_tv_delay, tv_delay_label};
+use crate::state::settings_editor::SettingsStatus;
 use chrono::{NaiveDate, ParseError, Utc};
 use log::{error, info};
 use mlbt_api::live::LiveResponse;
@@ -13,7 +12,6 @@ use mlbt_api::season::GameType;
 use mlbt_api::team::{RosterResponse, RosterType, TransactionsResponse};
 use mlbt_api::win_probability::WinProbabilityResponse;
 use std::sync::Arc;
-use std::time::Instant;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum MenuItem {
@@ -220,116 +218,6 @@ impl App {
         }
     }
 
-    /// Route a freshly fetched live snapshot through the broadcast-delay buffer.
-    ///
-    /// Returns whether anything was applied to the display. With the delay off this
-    /// is the old behaviour — apply immediately; with it on the snapshot is held and
-    /// [`release_due_live_data`] applies it once it has aged past the delay.
-    ///
-    /// Snapshots for a game other than the selected one are dropped here rather than
-    /// buffered. `update_live_data` would discard them anyway, and buffering them
-    /// would flush the selected game's queue on the way through.
-    ///
-    /// [`release_due_live_data`]: App::release_due_live_data
-    pub fn queue_live_data(
-        &mut self,
-        game: Arc<LiveResponse>,
-        win_probability: Arc<WinProbabilityResponse>,
-        fetched_at: Instant,
-    ) -> bool {
-        if Some(game.game_pk) != self.state.schedule.get_selected_game_opt() {
-            return false;
-        }
-
-        let delay = self.settings.tv_delay();
-        match self
-            .state
-            .delay
-            .accept(game, win_probability, fetched_at, delay)
-        {
-            Accepted::Now(game, win_probability) => {
-                self.update_live_data(&game, &win_probability);
-                true
-            }
-            Accepted::Held | Accepted::Stale => false,
-        }
-    }
-
-    /// Apply any held snapshot that has aged past the delay. Returns whether the
-    /// display changed. Called on a short timer, since a held snapshot has no event
-    /// of its own to wake the ui loop when it comes due.
-    pub fn release_due_live_data(&mut self) -> bool {
-        let delay = self.settings.tv_delay();
-        let Some((game, win_probability)) = self.state.delay.take_due(delay, Instant::now()) else {
-            return false;
-        };
-        self.update_live_data(&game, &win_probability);
-        true
-    }
-
-    /// How the delay should describe itself in the ui, or `None` when it is off.
-    ///
-    /// Once the buffer is warm this reports the *measured* age of what is on screen
-    /// rather than the setting. The two differ — the poll interval sits on top of the
-    /// configured delay — and the difference is the whole question when a broadcast
-    /// still gets spoiled: a display that reads `52s back` against a stream running a
-    /// minute late is working correctly and set too shallow, which looks identical to
-    /// a broken buffer if the badge only ever repeats the setting.
-    pub fn tv_delay_status(&self) -> Option<(String, DelayPhase)> {
-        if !self.settings.tv_delay_on() {
-            return None;
-        }
-        let now = Instant::now();
-        let label = tv_delay_label(self.settings.tv_delay_seconds);
-        let phase = if !self.state.gameday.is_delayable() {
-            DelayPhase::Idle
-        } else {
-            match self.state.delay.displayed_age(now) {
-                Some(age) => DelayPhase::Behind(age.as_secs()),
-                None => DelayPhase::Warming(
-                    self.state
-                        .delay
-                        .seconds_until_release(self.settings.tv_delay(), now)
-                        .unwrap_or(self.settings.tv_delay().as_secs()),
-                ),
-            }
-        };
-        Some((label, phase))
-    }
-
-    /// The game live data should be polled for, or `None` when there is nothing worth
-    /// polling.
-    ///
-    /// Falls back to the *selected* game when nothing is on the Gameday screen yet.
-    /// The refresher used to key off the displayed game alone, which deadlocked
-    /// against the delay: with the buffer holding the first snapshot, nothing was
-    /// displayed, so nothing was polled, so the buffer stayed one snapshot deep for
-    /// the whole cold window and the display arrived a full delay behind schedule.
-    pub fn live_poll_target(&self) -> Option<u64> {
-        if self.state.gameday.is_final() {
-            return None;
-        }
-        let displayed = self.state.gameday.current_game_id();
-        if displayed > 0 {
-            return Some(displayed);
-        }
-        self.state
-            .schedule
-            .get_selected_game_opt()
-            .filter(|&game_id| game_id > 0)
-    }
-
-    /// Step the delay to the next offered value, wrapping past 45s back to Off, and
-    /// persist it. This is the `t` key: the delay gets set while a game is on, which
-    /// is exactly when opening the help page to reach the settings form is worst.
-    pub fn cycle_tv_delay(&mut self) {
-        self.settings.tv_delay_seconds = next_tv_delay(self.settings.tv_delay_seconds);
-
-        if let Err(err) = self.store.save(&self.settings) {
-            error!("could not save tv delay: {err}");
-        }
-    }
-
     pub fn update_tab(&mut self, next: MenuItem) {
         // don't switch tabs if already on the correct tab
         if self.state.active_tab == next {
@@ -505,7 +393,6 @@ mod tests {
     use crate::config::ConfigFile;
     use crate::state::settings_editor::{PickerState, SettingsField, TEAM_OPTIONS};
     use crate::state::team_page::{TeamPageState, TeamSection};
-    use mlbt_api::schedule::AbstractGameState;
     use tui::widgets::TableState;
 
     fn test_app() -> App {
@@ -698,40 +585,6 @@ mod tests {
                 .time_or_score,
             "4:10 pm"
         );
-    }
-
-    #[test]
-    fn live_polling_falls_back_to_the_selected_game_while_the_delay_holds() {
-        // the deadlock this fixes: the buffer holds the first snapshot, so nothing is
-        // on the Gameday screen, so the old displayed-game-only check polled nothing,
-        // so the buffer never deepened past that one snapshot
-        let mut app = test_app();
-        app.state.schedule.schedule = vec![test_schedule_row(30, 114, 115)];
-        app.state.schedule.state.select(Some(0));
-
-        assert_eq!(app.state.gameday.current_game_id(), 0, "nothing displayed");
-        assert_eq!(app.live_poll_target(), Some(30));
-    }
-
-    #[test]
-    fn live_polling_prefers_the_displayed_game() {
-        // once something is on screen it wins: a schedule cursor moved by scrolling is
-        // not what Gameday is showing
-        let mut app = test_app();
-        app.state.schedule.schedule = vec![test_schedule_row(30, 114, 115)];
-        app.state.schedule.state.select(Some(0));
-        app.state.gameday.reset(Some(77));
-
-        assert_eq!(app.live_poll_target(), Some(77));
-    }
-
-    #[test]
-    fn a_final_game_is_not_polled() {
-        let mut app = test_app();
-        app.state.gameday.reset(Some(77));
-        app.state.gameday.game.abstract_game_state = Some(AbstractGameState::Final);
-
-        assert_eq!(app.live_poll_target(), None);
     }
 
     #[test]

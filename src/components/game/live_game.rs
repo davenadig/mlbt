@@ -51,14 +51,12 @@ impl GameState {
         self.current_at_bat = Self::get_current_play_ab_index(live_data);
         self.linescore = LineScore::from_live_data(live_data, &self.home_team, &self.away_team);
         if let Some(plays) = &live_data.live_data.plays.all_plays {
-            // Rebuilt, not merged. `all_plays` is the complete play list for this
-            // snapshot, so the map should be a copy of it — inserting into the previous
-            // map instead let plays survive a snapshot that does not contain them, and
-            // the broadcast delay makes that visible: every play seen while the delay
-            // was off (or shallower) stayed in the feed when the display rewound, so
-            // the feed announced a home run while the at bat panel had not reached the
-            // batter yet. The feed was the only part of the screen that could not go
-            // backwards.
+            // Rebuilt, not merged. `all_plays` is the complete play list for this snapshot,
+            // so the map should be a copy of it — inserting into the previous map instead
+            // let plays survive a snapshot that does not contain them, so the feed kept
+            // announcing plays the rest of the screen had walked back from. The box score
+            // and linescore were already rebuilt wholesale; the play list was the odd one
+            // out.
             self.at_bats = plays
                 .iter()
                 .map(|play| {

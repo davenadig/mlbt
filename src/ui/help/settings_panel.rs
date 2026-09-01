@@ -121,7 +121,6 @@ pub fn render_picker(picker: &PickerState, full_area: Rect, buf: &mut Buffer) {
         SettingsField::FavoriteTeam => " Favorite team ",
         SettingsField::Timezone => " Timezone ",
         SettingsField::LogLevel => " Log level ",
-        SettingsField::TvDelay => " TV delay ",
         SettingsField::AutoAdvanceDate => " Auto-advance date ",
     };
 

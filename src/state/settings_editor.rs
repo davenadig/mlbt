@@ -19,7 +19,6 @@ pub enum SettingsField {
     #[default]
     FavoriteTeam,
     Timezone,
-    TvDelay,
     AutoAdvanceDate,
     LogLevel,
 }
@@ -49,10 +48,9 @@ pub struct PickerState {
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 5] = [
+    pub const ALL: [SettingsField; 4] = [
         SettingsField::FavoriteTeam,
         SettingsField::Timezone,
-        SettingsField::TvDelay,
         SettingsField::AutoAdvanceDate,
         SettingsField::LogLevel,
     ];
@@ -61,7 +59,6 @@ impl SettingsField {
         match self {
             SettingsField::FavoriteTeam => "Team",
             SettingsField::Timezone => "Timezone",
-            SettingsField::TvDelay => "TV delay",
             SettingsField::AutoAdvanceDate => "Auto-date",
             SettingsField::LogLevel => "Log",
         }
@@ -70,8 +67,7 @@ impl SettingsField {
     pub fn next(self) -> Self {
         match self {
             SettingsField::FavoriteTeam => SettingsField::Timezone,
-            SettingsField::Timezone => SettingsField::TvDelay,
-            SettingsField::TvDelay => SettingsField::AutoAdvanceDate,
+            SettingsField::Timezone => SettingsField::AutoAdvanceDate,
             SettingsField::AutoAdvanceDate => SettingsField::LogLevel,
             SettingsField::LogLevel => SettingsField::FavoriteTeam,
         }
@@ -81,8 +77,7 @@ impl SettingsField {
         match self {
             SettingsField::FavoriteTeam => SettingsField::LogLevel,
             SettingsField::Timezone => SettingsField::FavoriteTeam,
-            SettingsField::TvDelay => SettingsField::Timezone,
-            SettingsField::AutoAdvanceDate => SettingsField::TvDelay,
+            SettingsField::AutoAdvanceDate => SettingsField::Timezone,
             SettingsField::LogLevel => SettingsField::AutoAdvanceDate,
         }
     }
@@ -92,7 +87,6 @@ impl SettingsField {
             SettingsField::FavoriteTeam => TEAM_OPTIONS.len(),
             SettingsField::Timezone => TIMEZONE_OPTIONS.len(),
             SettingsField::LogLevel => LOG_LEVEL_OPTIONS.len(),
-            SettingsField::TvDelay => TV_DELAY_OPTIONS.len(),
             SettingsField::AutoAdvanceDate => TOGGLE_OPTIONS.len(),
         }
     }
@@ -102,7 +96,6 @@ impl SettingsField {
             SettingsField::FavoriteTeam => TEAM_OPTIONS.get(index).map(|o| team_option_label(*o)),
             SettingsField::Timezone => TIMEZONE_OPTIONS.get(index).map(|o| o.picker_label),
             SettingsField::LogLevel => LOG_LEVEL_OPTIONS.get(index).map(|o| o.label),
-            SettingsField::TvDelay => TV_DELAY_OPTIONS.get(index).map(|o| o.picker_label),
             SettingsField::AutoAdvanceDate => TOGGLE_OPTIONS.get(index).map(|o| o.label),
         }
     }
@@ -121,10 +114,6 @@ impl SettingsField {
             SettingsField::Timezone => TIMEZONE_OPTIONS
                 .iter()
                 .position(|o| o.tz == settings.timezone)
-                .unwrap_or(0),
-            SettingsField::TvDelay => TV_DELAY_OPTIONS
-                .iter()
-                .position(|o| o.seconds == settings.tv_delay_seconds)
                 .unwrap_or(0),
             SettingsField::AutoAdvanceDate => TOGGLE_OPTIONS
                 .iter()
@@ -154,11 +143,6 @@ impl SettingsField {
             SettingsField::LogLevel => {
                 if let Some(opt) = LOG_LEVEL_OPTIONS.get(index) {
                     settings.log_level = opt.value;
-                }
-            }
-            SettingsField::TvDelay => {
-                if let Some(opt) = TV_DELAY_OPTIONS.get(index) {
-                    settings.tv_delay_seconds = opt.seconds;
                 }
             }
             SettingsField::AutoAdvanceDate => {
@@ -266,34 +250,12 @@ pub fn current_value_label(field: SettingsField, settings: &AppSettings) -> Stri
             .find(|o| o.value == settings.log_level)
             .map(|o| o.label.to_string())
             .unwrap_or_else(|| "<unset>".to_string()),
-        SettingsField::TvDelay => tv_delay_label(settings.tv_delay_seconds),
         SettingsField::AutoAdvanceDate => TOGGLE_OPTIONS
             .iter()
             .find(|o| o.value == settings.auto_advance_date)
             .map(|o| o.label.to_string())
             .unwrap_or_else(|| "<unset>".to_string()),
     }
-}
-
-/// The next delay in the offered sequence, wrapping past the longest back to Off.
-/// A hand-edited value outside the list steps to the first option rather than
-/// getting stuck, so the `t` key always does something.
-pub fn next_tv_delay(seconds: u16) -> u16 {
-    let current = TV_DELAY_OPTIONS.iter().position(|o| o.seconds == seconds);
-    match current {
-        Some(i) => TV_DELAY_OPTIONS[(i + 1) % TV_DELAY_OPTIONS.len()].seconds,
-        None => TV_DELAY_OPTIONS[0].seconds,
-    }
-}
-
-/// Row label for a delay value. A hand-edited `tv_delay_seconds` that is not one of
-/// the offered options still renders honestly rather than reading as the first one.
-pub fn tv_delay_label(seconds: u16) -> String {
-    TV_DELAY_OPTIONS
-        .iter()
-        .find(|o| o.seconds == seconds)
-        .map(|o| o.label.to_string())
-        .unwrap_or_else(|| format!("{seconds}s"))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -342,34 +304,6 @@ pub struct ToggleOption {
     pub value: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TvDelayOption {
-    /// Short name shown in the settings row.
-    pub label: &'static str,
-    /// Verbose label shown in the picker dropdown.
-    pub picker_label: &'static str,
-    pub seconds: u16,
-}
-
-/// Broadcast delay choices. 5s is the near-live case (a radio call, or a stream that
-/// barely trails); cable sits around 15-30s; a streaming feed is routinely 45-90s
-/// behind the field and MLB.TV can be worse, which is why the list runs to two
-/// minutes. The ceiling used to be 45s, and a feed further behind than that spoiled
-/// pitches no matter which option was picked — the buffer was working and the choices
-/// simply did not reach. Set it against the badge's measured figure, not by feel.
-#[rustfmt::skip]
-pub const TV_DELAY_OPTIONS: &[TvDelayOption] = &[
-    TvDelayOption {label: "Off", picker_label: "Off (live)", seconds: 0},
-    TvDelayOption {label: "5s", picker_label: "5 seconds", seconds: 5},
-    TvDelayOption {label: "15s", picker_label: "15 seconds", seconds: 15},
-    TvDelayOption {label: "30s", picker_label: "30 seconds", seconds: 30},
-    TvDelayOption {label: "45s", picker_label: "45 seconds", seconds: 45},
-    TvDelayOption {label: "60s", picker_label: "60 seconds", seconds: 60},
-    TvDelayOption {label: "75s", picker_label: "75 seconds", seconds: 75},
-    TvDelayOption {label: "90s", picker_label: "90 seconds", seconds: 90},
-    TvDelayOption {label: "120s", picker_label: "120 seconds", seconds: 120},
-];
-
 #[rustfmt::skip]
 pub const TOGGLE_OPTIONS: &[ToggleOption] = &[
     ToggleOption {label: "On", value: true},
@@ -407,52 +341,10 @@ pub fn max_value_width(field: SettingsField) -> usize {
             .map(|o| o.label.chars().count())
             .max()
             .unwrap_or(0),
-        SettingsField::TvDelay => TV_DELAY_OPTIONS
-            .iter()
-            .map(|o| o.label.chars().count())
-            .max()
-            .unwrap_or(0),
         SettingsField::AutoAdvanceDate => TOGGLE_OPTIONS
             .iter()
             .map(|o| o.label.chars().count())
             .max()
             .unwrap_or(0),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tv_delay_cycles_through_every_option_and_wraps() {
-        let mut seen = vec![0];
-        let mut current = 0;
-        for _ in 0..TV_DELAY_OPTIONS.len() {
-            current = next_tv_delay(current);
-            seen.push(current);
-        }
-        assert_eq!(
-            seen,
-            vec![0, 5, 15, 30, 45, 60, 75, 90, 120, 0],
-            "wraps back to off"
-        );
-    }
-
-    #[test]
-    fn a_hand_edited_delay_still_cycles() {
-        // mlbt.toml takes any u16, so the key must not dead end on an odd value
-        assert_eq!(next_tv_delay(23), 0);
-        assert_eq!(tv_delay_label(23), "23s", "and it renders honestly");
-    }
-
-    #[test]
-    fn tv_delay_field_is_reachable_from_both_directions() {
-        assert_eq!(SettingsField::Timezone.next(), SettingsField::TvDelay);
-        assert_eq!(
-            SettingsField::AutoAdvanceDate.previous(),
-            SettingsField::TvDelay
-        );
-        assert!(SettingsField::ALL.contains(&SettingsField::TvDelay));
     }
 }

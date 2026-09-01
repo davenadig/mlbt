@@ -11,7 +11,7 @@ use mlbt_api::teams::SportId;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 const DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
@@ -235,7 +235,6 @@ impl NetworkWorker {
         Ok(NetworkResponse::GameDataLoaded {
             game: Arc::new(game?),
             win_probability: Arc::new(wp?),
-            fetched_at: Instant::now(),
         })
     }
 

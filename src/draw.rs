@@ -8,7 +8,6 @@ use tui::{Frame, Terminal};
 use crate::app::{App, DebugState, MenuItem};
 use crate::components::debug::DebugInfo;
 use crate::components::stats::table::TeamOrPlayer;
-use crate::state::delay::DelayPhase;
 use crate::state::network::{ERROR_CHAR, LoadingState};
 use crate::state::settings_editor::SettingsFocus;
 use crate::state::stats::ActivePane;
@@ -155,10 +154,6 @@ type KeyHint = (&'static str, &'static str);
 const KEY_HINT_BG: Color = Color::Rgb(24, 24, 27);
 const KEY_HINT_KEY: Color = Color::Rgb(250, 204, 21);
 const KEY_HINT_TEXT: Color = Color::Rgb(250, 250, 250);
-/// Steady delay: the display is trailing the broadcast as asked.
-const DELAY_STEADY: Color = Color::Rgb(74, 222, 128);
-/// Buffer still filling: nothing on screen yet, and the badge says how long for.
-const DELAY_WARMING: Color = Color::Rgb(250, 204, 21);
 
 fn team_page_key_hints(has_player_profile: bool) -> &'static [KeyHint] {
     if has_player_profile {
@@ -191,11 +186,10 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("c", "card"),
             ("w", "win%"),
             ("s", "sort"),
-            ("t", "delay"),
             (":", "date"),
         ],
         MenuItem::Gameday => &[
-            ("j/k", "at-bat"),
+            ("←/→", "at-bat"),
             ("J/K", "box"),
             ("s", "start"),
             ("l", "live"),
@@ -208,7 +202,6 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("!", "scoring"),
             ("a/h", "lineup"),
             ("c", "card"),
-            ("t", "delay"),
         ],
         MenuItem::Stats if app.state.stats.search.is_open => &[
             ("type", "query"),
@@ -361,34 +354,6 @@ fn hint_spans(hints: &[KeyHint]) -> Vec<Span<'static>> {
     spans
 }
 
-/// Right-aligned status badge for the broadcast delay, or `None` when it is off.
-///
-/// This has to be visible somewhere permanent: a delayed display is indistinguishable
-/// from a stalled one, and the first thing anyone does with a screen that looks stuck
-/// is restart it. While the buffer is cold the badge counts down, which is the only
-/// thing explaining an empty Gameday for up to a delay's worth of seconds after
-/// opening it.
-///
-/// Once warm it reads `DELAY 45s · 47s back` — the *measured* lag of what is on
-/// screen, not a repeat of the setting. Set the delay against that number: if the
-/// broadcast still gets spoiled while the badge reads honestly, the delay is too
-/// shallow for the feed, which is a different problem from the buffer not working.
-fn delay_badge_spans(app: &App) -> Option<Vec<Span<'static>>> {
-    let (label, phase) = app.tv_delay_status()?;
-    let (color, text) = match phase {
-        DelayPhase::Warming(seconds) => (DELAY_WARMING, format!("DELAY {label} · in {seconds}s")),
-        DelayPhase::Behind(seconds) => (DELAY_STEADY, format!("DELAY {label} · {seconds}s back")),
-        DelayPhase::Idle => (DELAY_STEADY, format!("DELAY {label}")),
-    };
-    Some(vec![Span::styled(
-        text,
-        Style::default()
-            .fg(color)
-            .bg(KEY_HINT_BG)
-            .add_modifier(Modifier::BOLD),
-    )])
-}
-
 fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
     let [context_area, navigation_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
@@ -405,35 +370,11 @@ fn draw_key_hints(f: &mut Frame, area: Rect, app: &App) {
         Block::default().style(Style::default().bg(KEY_HINT_BG)),
         area,
     );
-    let badge = delay_badge_spans(app);
-    let (hints_area, badge_area) = match &badge {
-        Some(spans) => {
-            let width = spans
-                .iter()
-                .map(|s| s.content.chars().count())
-                .sum::<usize>()
-                + 1;
-            let [hints, badge_area] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(width as u16)])
-                    .areas(context_area);
-            (hints, Some(badge_area))
-        }
-        None => (context_area, None),
-    };
-
     f.render_widget(
         Paragraph::new(Line::from(hint_spans(context_key_hints(app))))
             .style(Style::default().bg(KEY_HINT_BG)),
-        hints_area,
+        context_area,
     );
-    if let (Some(spans), Some(badge_area)) = (badge, badge_area) {
-        f.render_widget(
-            Paragraph::new(Line::from(spans))
-                .alignment(Alignment::Right)
-                .style(Style::default().bg(KEY_HINT_BG)),
-            badge_area,
-        );
-    }
     f.render_widget(
         Paragraph::new(Line::from(hint_spans(navigation_key_hints(app))))
             .style(Style::default().bg(KEY_HINT_BG)),
@@ -656,7 +597,6 @@ fn draw_help(f: &mut Frame, rect: Rect, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mlbt_api::schedule::AbstractGameState;
 
     #[test]
     fn scoreboard_footer_surfaces_lineup_controls() {
@@ -665,65 +605,6 @@ mod tests {
         assert!(hints.contains(&("a/h", "lineup")));
         assert!(hints.contains(&("Enter", "gameday")));
         assert!(hints.contains(&("c", "card")));
-        assert!(hints.contains(&("t", "delay")));
-    }
-
-    #[test]
-    fn gameday_footer_surfaces_the_broadcast_delay() {
-        // the delay is set while a game is on; it has to be reachable without
-        // leaving the game screen for the help page
-        let mut app = App::new();
-        app.state.active_tab = MenuItem::Gameday;
-        assert!(context_key_hints(&app).contains(&("t", "delay")));
-    }
-
-    #[test]
-    fn no_delay_badge_when_the_delay_is_off() {
-        let mut app = App::new();
-        app.settings.tv_delay_seconds = 0;
-        assert!(delay_badge_spans(&app).is_none());
-    }
-
-    #[test]
-    fn delay_badge_counts_down_before_anything_is_displayed() {
-        let mut app = App::new();
-        app.settings.tv_delay_seconds = 30;
-        // nothing held and nothing displayed: the badge promises the full delay, which
-        // is what explains an empty Gameday to someone who just opened it
-        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
-        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "DELAY 30s · in 30s");
-    }
-
-    #[test]
-    fn delay_badge_reports_the_measured_lag_once_warm() {
-        // the number that matters is how far behind the display actually is, not the
-        // setting — a 45s delay lands at 45s plus however stale the released snapshot
-        // was, and only the measured figure says whether it is deep enough
-        let mut app = App::new();
-        app.settings.tv_delay_seconds = 45;
-        app.state
-            .delay
-            .set_displayed_at(std::time::Instant::now() - std::time::Duration::from_secs(47));
-        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
-        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "DELAY 45s · 47s back");
-    }
-
-    #[test]
-    fn a_finished_game_reports_no_lag_at_all() {
-        // a final game is never held, and it stops being polled, so the last snapshot
-        // just gets older. Counting that up past the setting would read as a stall on a
-        // screen that is simply showing a game that is over.
-        let mut app = App::new();
-        app.settings.tv_delay_seconds = 45;
-        app.state.gameday.game.abstract_game_state = Some(AbstractGameState::Final);
-        app.state
-            .delay
-            .set_displayed_at(std::time::Instant::now() - std::time::Duration::from_secs(226));
-        let spans = delay_badge_spans(&app).expect("badge renders when the delay is on");
-        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "DELAY 45s");
     }
 
     #[test]

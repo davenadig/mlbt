@@ -130,6 +130,7 @@ pub async fn handle_key_bindings(
         }
         (MenuItem::Scoreboard, KeyCode::Enter, _) => {
             guard.update_tab(MenuItem::Gameday);
+            guard.state.gameday.open_at_start();
             load_game_data(guard, network_requests, false).await;
         }
         (MenuItem::Gameday, Char('c'), _) => {
@@ -220,11 +221,6 @@ pub async fn handle_key_bindings(
         (MenuItem::Standings, KeyCode::Enter, _) => load_team(guard, network_requests).await,
         (MenuItem::Standings, Char(':'), _) => guard.update_tab(MenuItem::DatePicker),
 
-        // Broadcast delay. Bound on both live-game screens because the delay gets
-        // set while a game is on, when opening the help page to reach the settings
-        // form is exactly the wrong thing to have to do.
-        (MenuItem::Scoreboard | MenuItem::Gameday, Char('t'), _) => guard.cycle_tv_delay(),
-
         (MenuItem::Gameday, Char('i'), _) => guard.state.gameday.toggle_info(),
         (MenuItem::Gameday, Char('p'), _) => guard.state.gameday.toggle_at_bat(),
         (MenuItem::Gameday, Char('b'), _) => guard.state.gameday.toggle_boxscore(),
@@ -237,8 +233,14 @@ pub async fn handle_key_bindings(
         (MenuItem::Gameday, Char('K') | KeyCode::Up, KeyModifiers::SHIFT) => {
             guard.state.box_score.scroll_up()
         }
-        (MenuItem::Gameday, Char('j') | KeyCode::Down, _) => guard.state.gameday.previous_at_bat(),
-        (MenuItem::Gameday, Char('k') | KeyCode::Up, _) => guard.state.gameday.next_at_bat(),
+        // Left/right walk the game one at bat at a time: Gameday opens at inning 1, batter 1, so
+        // catching up to a broadcast is a run of right arrows that you stop before it spoils.
+        (MenuItem::Gameday, Char('j') | KeyCode::Down | KeyCode::Left, _) => {
+            guard.state.gameday.previous_at_bat()
+        }
+        (MenuItem::Gameday, Char('k') | KeyCode::Up | KeyCode::Right, _) => {
+            guard.state.gameday.next_at_bat()
+        }
         (MenuItem::Gameday, Char('l'), _) => guard.state.gameday.live(),
         (MenuItem::Gameday, Char('s'), _) => guard.state.gameday.start(),
         (MenuItem::Gameday, Char('!'), _) => guard.state.gameday.toggle_scoring_plays_only(),
@@ -508,12 +510,12 @@ async fn handle_global_key(
         (Char('1'), _) => {
             let force = guard.state.active_tab == MenuItem::Scoreboard;
             guard.update_tab(MenuItem::Scoreboard);
-            guard.state.gameday.live(); // reset at bat selection
             load_scoreboard(guard, network_requests, force).await;
         }
         (Char('2'), _) => {
             let force = guard.state.active_tab == MenuItem::Gameday;
             guard.update_tab(MenuItem::Gameday);
+            guard.state.gameday.open_at_start();
             load_game_data(guard, network_requests, force).await;
         }
         (Char('3'), _) => {

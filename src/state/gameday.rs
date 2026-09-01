@@ -11,9 +11,9 @@ pub struct GamedayState {
     pub scoring_plays_only: bool,
     /// The at bat index (map key) that is currently selected, or `None` when live.
     selected_at_bat: Option<u8>,
-    /// Snap to a scoring play when the next update arrives. Set when switching games with the
-    /// scoring play filter on, since the new game's at bats load asynchronously.
-    snap_pending: bool,
+    /// Land on the first at bat when the next update arrives. Set when opening Gameday or
+    /// switching games, since the new game's at bats load asynchronously.
+    open_pending: bool,
     pub plays_scroll_offset: u16,
     pub plays_scroll_state: ScrollbarState,
 }
@@ -25,16 +25,6 @@ impl GamedayState {
 
     pub fn current_game_id(&self) -> u64 {
         self.game.game_id
-    }
-
-    /// Whether the broadcast delay applies to what is on screen. A `Preview` or
-    /// `Final` game is never held. `None` means nothing has been displayed yet, which
-    /// is exactly the case the delay is about to start holding for.
-    pub fn is_delayable(&self) -> bool {
-        !matches!(
-            self.game.abstract_game_state,
-            Some(AbstractGameState::Final | AbstractGameState::Preview)
-        )
     }
 
     pub fn is_final(&self) -> bool {
@@ -54,28 +44,42 @@ impl GamedayState {
         }
     }
 
-    /// Update with latest data from the API, snapping to a scoring play if a game switch left one
-    /// pending. Detects a game switch here too since `GameData` responses from directly navigating
-    /// games (rather than a schedule refresh) arrive without a prior call to `reset`.
+    /// Update with latest data from the API, landing on the first at bat if opening the tab or a
+    /// game switch left that pending. Detects a game switch here too since `GameData` responses
+    /// from directly navigating games (rather than a schedule refresh) arrive without a prior call
+    /// to `reset`.
     pub fn update(&mut self, live_data: &LiveResponse, win_probability: &WinProbabilityResponse) {
         if self.game.game_id != live_data.game_pk {
             self.on_game_changing();
         }
         self.game.update(live_data, win_probability);
-        self.snap_if_pending();
+        self.open_if_pending();
     }
 
-    /// Clear the selection and, if the scoring play filter is on, mark a snap as pending once the
+    /// Clear the selection and mark the jump to the top of the game as pending, to run once the
     /// new game's at bats load.
     fn on_game_changing(&mut self) {
         self.selected_at_bat = None;
-        self.snap_pending = self.scoring_plays_only;
+        self.open_pending = true;
     }
 
-    fn snap_if_pending(&mut self) {
-        if std::mem::take(&mut self.snap_pending) && self.scoring_plays_only {
-            self.snap_to_scoring_play();
+    /// Open Gameday at the top of the game rather than at the live at bat, so walking forward
+    /// through the arrow keys never runs ahead of a broadcast. Called every time the tab is
+    /// entered; at bats load asynchronously, so this arms itself until there is one to land on.
+    pub fn open_at_start(&mut self) {
+        self.selected_at_bat = None;
+        self.open_pending = true;
+        self.open_if_pending();
+    }
+
+    fn open_if_pending(&mut self) {
+        if !std::mem::take(&mut self.open_pending) {
+            return;
         }
+        self.start();
+        // Nothing to select yet — the at bats arrive with a later response. Stay armed rather
+        // than silently falling back to live, which is exactly the spoiler this avoids.
+        self.open_pending = self.selected_at_bat.is_none();
     }
 
     /// The at bat indexes that can be navigated to, in game order. When `scoring_plays_only` is
@@ -102,25 +106,27 @@ impl GamedayState {
         Some((indexes, pos))
     }
 
+    /// Step one at bat forward, stopping at the newest one. Deliberately does not wrap: walking
+    /// forward to catch up with a broadcast should stall at the live edge, not silently loop back
+    /// to the first inning and lose the place. `None` is already the live edge, so it stays.
     pub fn next_at_bat(&mut self) {
         let Some((indexes, pos)) = self.navigable_selection() else {
             return;
         };
-        let next = match pos {
-            Some(p) if p >= indexes.len() - 1 => 0,
-            Some(p) => p + 1,
-            None => 0,
+        let Some(p) = pos else {
+            return;
         };
-        self.selected_at_bat = Some(indexes[next]);
+        self.selected_at_bat = Some(indexes[(p + 1).min(indexes.len() - 1)]);
     }
 
+    /// Step one at bat back, stopping at the first one. From live this enters the list at its end.
     pub fn previous_at_bat(&mut self) {
         let Some((indexes, pos)) = self.navigable_selection() else {
             return;
         };
         let prev = match pos {
-            None | Some(0) => indexes.len() - 1,
-            Some(p) => p - 1,
+            None => indexes.len() - 1,
+            Some(p) => p.saturating_sub(1),
         };
         self.selected_at_bat = Some(indexes[prev]);
     }
@@ -256,18 +262,70 @@ mod tests {
     #[test]
     fn navigation_walks_every_play_normally() {
         let mut state = state_with(&[0, 1, 2], &[1]);
+        state.start();
 
-        state.next_at_bat();
         assert_eq!(state.selected_at_bat(), Some(0));
         state.next_at_bat();
         assert_eq!(state.selected_at_bat(), Some(1));
         state.previous_at_bat();
         assert_eq!(state.selected_at_bat(), Some(0));
-        // wraps to the last at bat
+        // stops at the first at bat instead of wrapping to the end
+        state.previous_at_bat();
+        assert_eq!(state.selected_at_bat(), Some(0));
+    }
+
+    #[test]
+    fn walking_forward_stops_at_the_newest_at_bat() {
+        // the point of the arrow keys: right arrow catches up to the broadcast and then stalls,
+        // rather than wrapping back to the first inning and losing the place
+        let mut state = state_with(&[0, 1, 2], &[]);
+        state.start();
+
+        for _ in 0..5 {
+            state.next_at_bat();
+        }
+        assert_eq!(state.selected_at_bat(), Some(2));
+    }
+
+    #[test]
+    fn stepping_forward_from_live_stays_live() {
+        // live is already the newest at bat, so there is nothing ahead of it to step to
+        let mut state = state_with(&[0, 1, 2], &[]);
+        state.live();
+
+        state.next_at_bat();
+        assert_eq!(state.selected_at_bat(), None);
+
+        // stepping back from live enters the list at its end
         state.previous_at_bat();
         assert_eq!(state.selected_at_bat(), Some(2));
-        state.next_at_bat();
+    }
+
+    #[test]
+    fn opening_gameday_lands_on_the_first_at_bat() {
+        let mut state = state_with(&[0, 1, 2], &[]);
+        state.live();
+
+        state.open_at_start();
         assert_eq!(state.selected_at_bat(), Some(0));
+    }
+
+    #[test]
+    fn opening_gameday_before_at_bats_load_stays_armed() {
+        // Gameday is entered before the GameData response arrives; falling back to live here is
+        // exactly the spoiler this avoids, so the jump waits for the at bats
+        let mut state = GamedayState::default();
+        state.open_at_start();
+        assert_eq!(state.selected_at_bat(), None);
+
+        let win_probability = WinProbabilityResponse::default();
+        state.update(&live_response(6, &[0, 1, 2], &[]), &win_probability);
+        assert_eq!(state.selected_at_bat(), Some(0));
+
+        // and a later update for the same game leaves the selection where the user put it
+        state.next_at_bat();
+        state.update(&live_response(6, &[0, 1, 2], &[]), &win_probability);
+        assert_eq!(state.selected_at_bat(), Some(1));
     }
 
     #[test]
@@ -276,15 +334,15 @@ mod tests {
         state.scoring_plays_only = true;
 
         // only scoring plays are reachable, in order
-        state.next_at_bat();
+        state.start();
         assert_eq!(state.selected_at_bat(), Some(1));
         state.next_at_bat();
         assert_eq!(state.selected_at_bat(), Some(3));
-        // wraps back to the first scoring play
+        // stops on the last scoring play instead of wrapping
         state.next_at_bat();
-        assert_eq!(state.selected_at_bat(), Some(1));
+        assert_eq!(state.selected_at_bat(), Some(3));
         state.previous_at_bat();
-        assert_eq!(state.selected_at_bat(), Some(3));
+        assert_eq!(state.selected_at_bat(), Some(1));
     }
 
     #[test]
@@ -371,13 +429,11 @@ mod tests {
     }
 
     #[test]
-    fn an_older_snapshot_takes_the_plays_feed_back_with_it() {
-        // the broadcast delay makes the display move backwards: turn it on (or deepen
-        // it) mid game and the next thing applied is a snapshot from before what is on
-        // screen. The play list used to be insert-only, so plays seen while the delay
-        // was off stayed in the feed after the rewind — the feed announced a home run
-        // while the at bat panel had not reached that batter yet, and it was the only
-        // part of the screen that could not go backwards.
+    fn a_shorter_snapshot_takes_the_plays_feed_back_with_it() {
+        // `all_plays` is the complete list on every snapshot, so the play map is a copy of it,
+        // not a merge into the previous one. Merging let any play the feed had ever seen
+        // survive a snapshot that did not contain it, and the feed was then the only part of
+        // the screen that could not go backwards.
         let mut state = GamedayState::default();
         let win_probability = WinProbabilityResponse::default();
 
@@ -390,12 +446,11 @@ mod tests {
     }
 
     #[test]
-    fn switching_games_via_direct_navigation_snaps_to_scoring_play() {
+    fn switching_games_via_direct_navigation_opens_at_the_start() {
         // this is the path taken when the user selects a different game with j/k on the
         // Scoreboard tab: `GameData` responses arrive via `update` directly, with no prior call to
         // `reset` (that only happens on a schedule refresh).
         let mut state = state_with(&[0, 1, 2], &[1]);
-        state.scoring_plays_only = true;
         state.selected_at_bat = Some(1);
 
         let win_probability = WinProbabilityResponse::default();
@@ -403,42 +458,41 @@ mod tests {
         state.update(&response, &win_probability);
 
         assert_eq!(state.game.game_id, 6);
-        assert_eq!(state.selected_at_bat(), Some(3));
+        assert_eq!(state.selected_at_bat(), Some(0));
 
-        // a later update for the same game doesn't re-snap and drag the selection along
-        state.previous_at_bat();
+        // a later update for the same game doesn't drag the selection along
+        state.next_at_bat();
         assert_eq!(state.selected_at_bat(), Some(1));
         state.update(&response, &win_probability);
         assert_eq!(state.selected_at_bat(), Some(1));
     }
 
     #[test]
-    fn switching_games_without_filter_just_clears_the_selection() {
+    fn switching_games_with_the_scoring_filter_opens_at_the_first_scoring_play() {
+        // the start of the game, not the latest scoring play: the latest one is the spoiler
         let mut state = state_with(&[0, 1, 2], &[1]);
+        state.scoring_plays_only = true;
         state.selected_at_bat = Some(1);
 
         let win_probability = WinProbabilityResponse::default();
-        let response = live_response(6, &[0, 1, 2, 3], &[1, 3]);
-        state.update(&response, &win_probability);
+        state.update(&live_response(6, &[0, 1, 2, 3], &[1, 3]), &win_probability);
 
-        assert_eq!(state.selected_at_bat(), None);
+        assert_eq!(state.selected_at_bat(), Some(1));
     }
 
     #[test]
-    fn switching_games_via_schedule_refresh_snaps_to_scoring_play() {
+    fn switching_games_via_schedule_refresh_opens_at_the_start() {
         // this is the path taken on a schedule poll: `reset` runs first (before at bats have
         // loaded), then the `GameData` response arrives separately via `update`.
         let mut state = state_with(&[0, 1, 2], &[1]);
-        state.scoring_plays_only = true;
         state.selected_at_bat = Some(1);
 
         state.reset(Some(6));
         assert_eq!(state.selected_at_bat(), None);
 
         let win_probability = WinProbabilityResponse::default();
-        let response = live_response(6, &[0, 1, 2, 3], &[1, 3]);
-        state.update(&response, &win_probability);
-        assert_eq!(state.selected_at_bat(), Some(3));
+        state.update(&live_response(6, &[0, 1, 2, 3], &[1, 3]), &win_probability);
+        assert_eq!(state.selected_at_bat(), Some(0));
     }
 
     #[test]
@@ -460,12 +514,14 @@ mod tests {
         // no at bats at all
         let mut empty = GamedayState::default();
         empty.next_at_bat();
+        empty.previous_at_bat();
         assert_eq!(empty.selected_at_bat(), None);
 
         // at bats exist but none score, with the filter on
         let mut none_score = state_with(&[0, 1], &[]);
         none_score.scoring_plays_only = true;
         none_score.next_at_bat();
+        none_score.previous_at_bat();
         assert_eq!(none_score.selected_at_bat(), None);
     }
 }
