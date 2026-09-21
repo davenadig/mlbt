@@ -34,8 +34,9 @@ const SCOREBOARD_DOCS: &[&[&str; 2]; 10] = &[
     &["Toggle win probability", "w"],
     &["Toggle sort mode", "s"],
 ];
-const GAMEDAY_DOCS: &[&[&str; 2]; 17] = &[
+const GAMEDAY_DOCS: &[&[&str; 2]; 18] = &[
     &["Gameday", "2"],
+    &["Listen to team radio", "L"],
     &["Toggle game info", "i"],
     &["Toggle pitches", "p"],
     &["Toggle boxscore", "b"],

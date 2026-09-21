@@ -28,6 +28,48 @@ pub async fn handle_key_bindings(
             std::process::exit(0);
         }
 
+        (MenuItem::Gameday, _, _) if guard.state.gameday.listen.open => match key_event.code {
+            KeyCode::Esc | Char('L') => guard.state.gameday.listen.open = false,
+            Char('q') => {
+                cleanup_terminal();
+                std::process::exit(0);
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
+                if !guard.state.gameday.listen.busy {
+                    guard.state.gameday.listen.home = !guard.state.gameday.listen.home;
+                }
+            }
+            KeyCode::Enter | Char('x') if !guard.state.gameday.listen.busy => {
+                let state = &mut guard.state.gameday;
+                let team = state
+                    .listen
+                    .selected(state.game.away_team, state.game.home_team);
+                if key_event.code == KeyCode::Enter && team.id == 0 {
+                    state.listen.message = "Team data is still loading. Try again shortly.".into();
+                } else {
+                    let stop = key_event.code == Char('x');
+                    state.listen.busy = true;
+                    state.listen.message = if stop {
+                        "Stopping baseball audio…".into()
+                    } else {
+                        format!("Tuning {}…", team.name)
+                    };
+                    launch_listen(Arc::clone(app), if stop { None } else { Some(team.name) });
+                }
+            }
+            _ => {}
+        },
+        (MenuItem::Gameday, Char('L'), _) => {
+            let favorite = guard.settings.favorite_team;
+            let state = &mut guard.state.gameday;
+            state.listen.open(
+                state.game.game_id,
+                state.game.away_team,
+                state.game.home_team,
+                favorite,
+            );
+        }
+
         // Team page from standings
         (MenuItem::Standings, KeyCode::Esc, _) if guard.state.standings.has_team_page() => {
             guard.close_overlay();
@@ -305,6 +347,57 @@ fn notify_failure(game_id: u64, log: &Path) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+}
+
+fn launch_listen(app: Arc<Mutex<App>>, team: Option<&'static str>) {
+    tokio::spawn(async move {
+        let message = run_listen(team).await;
+        let mut guard = app.lock().await;
+        guard.state.gameday.listen.busy = false;
+        guard.state.gameday.listen.message = message;
+    });
+}
+
+fn listen_command(home: &Path, team: Option<&str>) -> tokio::process::Command {
+    let mut command =
+        tokio::process::Command::new(home.join("GitHub/cogspace/tools/bin/cog-baseball"));
+    command.arg("listen");
+    match team {
+        Some(team) => {
+            command.args(["--team", team]);
+        }
+        None => {
+            command.arg("--stop");
+        }
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    command
+}
+
+async fn run_listen(team: Option<&str>) -> String {
+    let Some(home) = std::env::var_os("HOME") else {
+        return "Cannot tune: HOME is not set.".into();
+    };
+    let mut command = listen_command(Path::new(&home), team);
+    match tokio::time::timeout(std::time::Duration::from_secs(90), command.output()).await {
+        Ok(Ok(output)) => {
+            #[derive(serde::Deserialize)]
+            struct Reply {
+                ok: bool,
+                message: String,
+            }
+            match serde_json::from_slice::<Reply>(&output.stdout) {
+                Ok(reply) if reply.ok == output.status.success() => reply.message,
+                _ => "Audio helper failed. Check cog-baseball listen and the music setup.".into(),
+            }
+        }
+        Ok(Err(_)) => "Cannot launch cog-baseball listen. Check the Cogspace installation.".into(),
+        Err(_) => "SiriusXM timed out. Try again after checking music.".into(),
+    }
 }
 
 fn launch_scorecard(game_id: u64) {
@@ -689,6 +782,20 @@ fn handle_help_key(key_event: KeyEvent, guard: &mut AppGuard<'_>) -> (bool, bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listen_uses_team_name_as_one_argument_and_stop_is_explicit() {
+        let play = listen_command(Path::new("/Users/test"), Some("Boston Red Sox"));
+        assert_eq!(
+            play.as_std().get_args().collect::<Vec<_>>(),
+            ["listen", "--team", "Boston Red Sox"]
+        );
+        let stop = listen_command(Path::new("/Users/test"), None);
+        assert_eq!(
+            stop.as_std().get_args().collect::<Vec<_>>(),
+            ["listen", "--stop"]
+        );
+    }
 
     #[test]
     fn scorecard_command_targets_selected_game() {

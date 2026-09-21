@@ -1,5 +1,6 @@
 pub(crate) mod at_bat;
 pub(crate) mod gameday_widget;
+pub(crate) mod listen;
 pub(crate) mod matchup;
 pub(crate) mod pitch_tracker;
 pub(crate) mod plays;

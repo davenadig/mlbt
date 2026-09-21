@@ -188,8 +188,15 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("s", "sort"),
             (":", "date"),
         ],
+        MenuItem::Gameday if app.state.gameday.listen.open => &[
+            ("←/→/Tab", "team"),
+            ("Enter", "tune"),
+            ("x", "stop"),
+            ("Esc", "close"),
+        ],
         MenuItem::Gameday => &[
-            ("←/→", "at-bat"),
+            ("L", "Listen"),
+            ("←/→", "pitch"),
             ("J/K", "box"),
             ("s", "start"),
             ("l", "live"),
@@ -305,6 +312,9 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
 }
 
 fn navigation_key_hints(app: &App) -> &'static [KeyHint] {
+    if app.state.active_tab == MenuItem::Gameday && app.state.gameday.listen.open {
+        return &[];
+    }
     if app.state.active_tab == MenuItem::DatePicker
         || (app.state.active_tab == MenuItem::Stats && app.state.stats.search.is_open)
         || (app.state.active_tab == MenuItem::Help && app.state.settings_editor.picker.is_some())
@@ -322,6 +332,9 @@ fn navigation_key_hints(app: &App) -> &'static [KeyHint] {
 }
 
 fn global_key_hints(app: &App) -> &'static [KeyHint] {
+    if app.state.active_tab == MenuItem::Gameday && app.state.gameday.listen.open {
+        return &[("q", "quit")];
+    }
     if app.state.active_tab == MenuItem::DatePicker
         || (app.state.active_tab == MenuItem::Stats && app.state.stats.search.is_open)
     {

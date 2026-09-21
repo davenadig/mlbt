@@ -7,6 +7,7 @@ use tui::widgets::ScrollbarState;
 
 #[derive(Default)]
 pub struct GamedayState {
+    pub listen: crate::state::listen::ListenState,
     pub panels: GamedayPanels,
     pub game: GameState,
     pub scoring_plays_only: bool,
@@ -95,6 +96,7 @@ impl GamedayState {
     /// Clear the selection and mark the jump to the top of the game as pending, to run once the
     /// new game's at bats load.
     fn on_game_changing(&mut self) {
+        self.listen.open = false;
         self.cursor = None;
         self.open_pending = true;
     }

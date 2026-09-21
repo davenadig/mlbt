@@ -106,6 +106,9 @@ impl Widget for GamedayWidget<'_> {
                 Widget::render(wps_widget, chunks[1], buf);
             }
         }
+        if self.state.listen.open {
+            crate::ui::gameday::listen::render(self.state, area, buf);
+        }
     }
 }
 
