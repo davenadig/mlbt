@@ -15,6 +15,10 @@ pub struct AdStatus {
     pub lag: Option<f64>,
     pub muted: bool,
     #[serde(default)]
+    pub mute_margin: Option<f64>,
+    #[serde(default)]
+    pub unmute_margin: Option<f64>,
+    #[serde(default)]
     pub message: String,
 }
 
@@ -223,7 +227,13 @@ impl AdMuteState {
             .lag
             .map(|s| format!("{s:.1}s"))
             .unwrap_or_else(|| "unset".into());
-        format!("Sonos ads {state} | Delay {lag} | Mute +5s / Unmute -5s")
+        let margin =
+            |value: Option<f64>| value.map(|s| format!("{s}s")).unwrap_or_else(|| "?".into());
+        format!(
+            "Sonos ads {state} | Delay {lag} | Mute +{} / Unmute -{}",
+            margin(self.status.mute_margin),
+            margin(self.status.unmute_margin)
+        )
     }
 }
 
@@ -250,10 +260,22 @@ mod tests {
     fn status_makes_target_delay_and_padding_explicit() {
         let mut state = AdMuteState::default();
         state.status.lag = Some(11.2);
+        state.status.mute_margin = Some(10.0);
+        state.status.unmute_margin = Some(10.0);
         assert_eq!(
             state.label(),
-            "Sonos ads OFF | Delay 11.2s | Mute +5s / Unmute -5s"
+            "Sonos ads OFF | Delay 11.2s | Mute +10s / Unmute -10s"
         );
+    }
+
+    #[test]
+    fn padding_label_uses_helper_settings() {
+        let mut state = AdMuteState::default();
+        state.status = serde_json::from_str(
+            r#"{"game_pk":824787,"lag":6,"muted":false,"mute_margin":12,"unmute_margin":8}"#,
+        )
+        .unwrap();
+        assert!(state.label().ends_with("Mute +12s / Unmute -8s"));
     }
 
     fn fake_helper() -> Command {
