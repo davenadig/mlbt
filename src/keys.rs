@@ -24,6 +24,7 @@ pub async fn handle_key_bindings(
     match (guard.state.active_tab, key_event.code, key_event.modifiers) {
         // Ctrl+C always quits
         (_, Char('c'), KeyModifiers::CONTROL) => {
+            guard.state.gameday.ads.stop();
             cleanup_terminal();
             std::process::exit(0);
         }
@@ -31,6 +32,7 @@ pub async fn handle_key_bindings(
         (MenuItem::Gameday, _, _) if guard.state.gameday.listen.open => match key_event.code {
             KeyCode::Esc | Char('L') => guard.state.gameday.listen.open = false,
             Char('q') => {
+                guard.state.gameday.ads.stop();
                 cleanup_terminal();
                 std::process::exit(0);
             }
@@ -127,6 +129,7 @@ pub async fn handle_key_bindings(
 
         // regular quit after checking search mode
         (_, Char('q'), _) => {
+            guard.state.gameday.ads.stop();
             cleanup_terminal();
             std::process::exit(0);
         }
@@ -263,6 +266,24 @@ pub async fn handle_key_bindings(
         (MenuItem::Standings, KeyCode::Enter, _) => load_team(guard, network_requests).await,
         (MenuItem::Standings, Char(':'), _) => guard.update_tab(MenuItem::DatePicker),
 
+        (MenuItem::Gameday, Char('A'), _) => {
+            let state = &mut guard.state.gameday;
+            if state.ads.active() {
+                state.ads.stop();
+            } else if state.game.game_id > 0
+                && matches!(
+                    state.game.abstract_game_state,
+                    Some(mlbt_api::schedule::AbstractGameState::Live)
+                )
+            {
+                state.ads.start(state.game.game_id);
+            } else {
+                state.ads.status.message = "Select a live game to enable Sonos ads".into();
+            }
+        }
+        (MenuItem::Gameday, Char('P'), _) => guard.state.gameday.ads.command("first_pitch"),
+        (MenuItem::Gameday, Char('M'), _) => guard.state.gameday.ads.command("mute"),
+        (MenuItem::Gameday, Char('U'), _) => guard.state.gameday.ads.command("unmute"),
         (MenuItem::Gameday, Char('i'), _) => guard.state.gameday.toggle_info(),
         (MenuItem::Gameday, Char('p'), _) => guard.state.gameday.toggle_at_bat(),
         (MenuItem::Gameday, Char('b'), _) => guard.state.gameday.toggle_boxscore(),
@@ -599,6 +620,7 @@ async fn handle_global_key(
 ) {
     match (key_event.code, key_event.modifiers) {
         (Char('q'), _) => {
+            guard.state.gameday.ads.stop();
             cleanup_terminal();
             std::process::exit(0);
         }

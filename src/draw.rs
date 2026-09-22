@@ -477,13 +477,34 @@ fn draw_date_picker(f: &mut Frame, rect: Rect, app: &mut App) {
 }
 
 fn draw_gameday(f: &mut Frame, rect: Rect, app: &mut App) {
+    let [status, controls, game] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+    ])
+    .areas(rect);
+    let ads = &app.state.gameday.ads;
+    f.render_widget(
+        Paragraph::new(ads.label()).style(Style::default().fg(KEY_HINT_KEY).bg(KEY_HINT_BG)),
+        status,
+    );
+    let help = if ads.status.message.is_empty() {
+        "A Sonos on/off   P sync first pitch   M mute   U unmute   (stops when leaving Gameday)"
+            .to_string()
+    } else {
+        format!("A on/off  P sync  M/U mute/unmute | {}", ads.status.message)
+    };
+    f.render_widget(
+        Paragraph::new(help).style(Style::default().bg(KEY_HINT_BG)),
+        controls,
+    );
     f.render_widget(
         GamedayWidget {
             active: app.state.box_score.active_team,
             state: &mut app.state.gameday,
             boxscore_state: &mut app.state.box_score,
         },
-        rect,
+        game,
     );
 }
 
@@ -611,6 +632,28 @@ fn draw_help(f: &mut Frame, rect: Rect, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gameday_renders_sonos_delay_and_separate_controls() {
+        use tui::backend::TestBackend;
+        for width in [80, 120] {
+            let mut app = App::new();
+            app.state.active_tab = MenuItem::Gameday;
+            app.state.gameday.ads.status.lag = Some(11.2);
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal
+                .draw(|f| draw_gameday(f, f.area(), &mut app))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let lines: Vec<String> = (0..2)
+                .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+                .collect();
+            assert!(lines[0].contains("Sonos ads OFF | Delay 11.2s"));
+            assert!(lines[0].contains("Mute +5s / Unmute -5s"));
+            assert!(lines[1].contains("P sync first pitch"));
+            assert!(lines[1].contains("M mute   U unmute"));
+        }
+    }
 
     #[test]
     fn scoreboard_footer_surfaces_lineup_controls() {

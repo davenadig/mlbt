@@ -225,6 +225,9 @@ impl App {
         }
 
         self.state.previous_tab = self.state.active_tab;
+        if self.state.active_tab == MenuItem::Gameday {
+            self.state.gameday.ads.stop();
+        }
         self.state.active_tab = next;
         self.state.debug_state = DebugState::Off;
 

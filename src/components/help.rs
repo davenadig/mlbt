@@ -34,9 +34,13 @@ const SCOREBOARD_DOCS: &[&[&str; 2]; 10] = &[
     &["Toggle win probability", "w"],
     &["Toggle sort mode", "s"],
 ];
-const GAMEDAY_DOCS: &[&[&str; 2]; 18] = &[
+const GAMEDAY_DOCS: &[&[&str; 2]; 22] = &[
     &["Gameday", "2"],
     &["Listen to team radio", "L"],
+    &["Sonos ads on/off (Gameday only)", "A"],
+    &["Sync Sonos: first pitch caught", "P"],
+    &["Mute Sonos now", "M"],
+    &["Unmute Sonos now", "U"],
     &["Toggle game info", "i"],
     &["Toggle pitches", "p"],
     &["Toggle boxscore", "b"],

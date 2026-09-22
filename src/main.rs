@@ -128,9 +128,19 @@ async fn main_ui_loop(
     mut network_responses: mpsc::Receiver<NetworkResponse>,
 ) {
     let mut loading = LoadingState::default();
+    let mut audio_tick = tokio::time::interval(std::time::Duration::from_millis(500));
 
     loop {
         tokio::select! {
+            _ = audio_tick.tick() => {
+                let mut guard = app.lock().await;
+                let visible = (guard.state.active_tab == app::MenuItem::Gameday)
+                    .then_some(guard.state.gameday.current_game_id());
+                guard.state.gameday.ads.tick(visible);
+                if visible.is_some() && !loading.is_loading {
+                    draw::draw(&mut terminal, &mut guard, loading);
+                }
+            }
             Some(ui_event) = ui_events.recv() => {
                 let should_redraw = handle_ui_event(ui_event, &app, &network_requests).await;
                 if should_redraw && !loading.is_loading {

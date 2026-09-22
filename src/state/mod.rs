@@ -1,3 +1,4 @@
+pub mod ad_mute;
 pub mod app_settings;
 pub mod app_state;
 pub mod boxscore;
