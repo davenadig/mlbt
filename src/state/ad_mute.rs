@@ -19,6 +19,10 @@ pub struct AdStatus {
     #[serde(default)]
     pub unmute_margin: Option<f64>,
     #[serde(default)]
+    pub next_action: Option<String>,
+    #[serde(default)]
+    pub next_action_at: Option<f64>,
+    #[serde(default)]
     pub message: String,
 }
 
@@ -213,6 +217,14 @@ impl AdMuteState {
     }
 
     pub fn label(&self) -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        self.label_at(now)
+    }
+
+    fn label_at(&self, now: f64) -> String {
         let state = if !self.active() {
             "OFF"
         } else if self.status.muted {
@@ -229,8 +241,30 @@ impl AdMuteState {
             .unwrap_or_else(|| "unset".into());
         let margin =
             |value: Option<f64>| value.map(|s| format!("{s}s")).unwrap_or_else(|| "?".into());
+        let countdown = if self.active() && self.status.state == "running" {
+            match (
+                self.status.next_action.as_deref(),
+                self.status.next_action_at,
+            ) {
+                (Some(action @ ("mute" | "unmute")), Some(at)) if at.is_finite() => {
+                    let verb = if action == "mute" {
+                        "Muting"
+                    } else {
+                        "Unmuting"
+                    };
+                    if at <= now {
+                        format!(" | {verb} now")
+                    } else {
+                        format!(" | {verb} in {:.0}s", (at - now).ceil())
+                    }
+                }
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
         format!(
-            "Sonos ads {state} | Delay {lag} | Mute +{} / Unmute -{}",
+            "Sonos ads {state}{countdown} | Delay {lag} | Mute +{} / Unmute -{}",
             margin(self.status.mute_margin),
             margin(self.status.unmute_margin)
         )
@@ -285,6 +319,55 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         cmd
+    }
+
+    #[test]
+    fn countdown_ticks_and_clears_with_schedule_and_owner() {
+        let mut state = AdMuteState::default();
+        state.launch(fake_helper(), 111).unwrap();
+        state.status = serde_json::from_str(
+            r#"{"state":"running","game_pk":111,"lag":6,"muted":false,"mute_margin":10,"unmute_margin":10,"next_action":"mute","next_action_at":1010}"#,
+        ).unwrap();
+        assert!(state.label_at(1000.0).contains("Muting in 10s"));
+        assert!(state.label_at(1001.2).contains("Muting in 9s"));
+        assert!(state.label_at(1011.0).contains("Muting now"));
+        state.status.muted = true;
+        state.status.next_action = Some("unmute".into());
+        state.status.next_action_at = Some(1100.0);
+        assert!(state.label_at(1089.0).contains("Unmuting in 11s"));
+        state.status.next_action = None;
+        state.status.next_action_at = None;
+        assert!(!state.label_at(1090.0).contains("Unmuting"));
+        state.status.next_action = Some("unmute".into());
+        state.status.next_action_at = Some(1100.0);
+        state.stop();
+        assert!(!state.label_at(1090.0).contains("Unmuting"));
+    }
+
+    #[test]
+    fn countdown_is_visible_in_top_row_on_narrow_terminals() {
+        use tui::{Terminal, backend::TestBackend, widgets::Paragraph};
+        let mut state = AdMuteState::default();
+        state.launch(fake_helper(), 111).unwrap();
+        state.status.state = "running".into();
+        state.status.lag = Some(6.4);
+        state.status.mute_margin = Some(10.0);
+        state.status.unmute_margin = Some(10.0);
+        state.status.next_action_at = Some(1010.0);
+        for (action, expected) in [("mute", "Muting in 10s"), ("unmute", "Unmuting in 10s")] {
+            state.status.next_action = Some(action.into());
+            state.status.muted = action == "unmute";
+            for width in [80, 120] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+                terminal
+                    .draw(|f| f.render_widget(Paragraph::new(state.label_at(1000.0)), f.area()))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+                assert!(row.contains(expected), "{row}");
+                assert!(row.contains("Delay 6.4s"), "{row}");
+            }
+        }
     }
 
     #[test]

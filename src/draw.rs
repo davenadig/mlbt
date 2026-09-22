@@ -640,6 +640,8 @@ mod tests {
             let mut app = App::new();
             app.state.active_tab = MenuItem::Gameday;
             app.state.gameday.ads.status.lag = Some(11.2);
+            app.state.gameday.ads.status.mute_margin = Some(10.0);
+            app.state.gameday.ads.status.unmute_margin = Some(10.0);
             let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
             terminal
                 .draw(|f| draw_gameday(f, f.area(), &mut app))
@@ -649,7 +651,7 @@ mod tests {
                 .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
                 .collect();
             assert!(lines[0].contains("Sonos ads OFF | Delay 11.2s"));
-            assert!(lines[0].contains("Mute +5s / Unmute -5s"));
+            assert!(lines[0].contains("Mute +10s / Unmute -10s"));
             assert!(lines[1].contains("P sync first pitch"));
             assert!(lines[1].contains("M mute   U unmute"));
         }
