@@ -117,7 +117,7 @@ impl AdMuteState {
         }
     }
 
-    fn launch(&mut self, mut command: Command, game_id: u64) -> std::io::Result<()> {
+    pub(crate) fn launch(&mut self, mut command: Command, game_id: u64) -> std::io::Result<()> {
         let mut child = command.spawn()?;
         let input = child.stdin.take();
         let output = child.stdout.take().expect("helper stdout is piped");
