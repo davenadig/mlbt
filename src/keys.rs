@@ -281,7 +281,8 @@ pub async fn handle_key_bindings(
                 state.ads.status.message = "Select a live game to enable Sonos ads".into();
             }
         }
-        (MenuItem::Gameday, Char('P'), _) => guard.state.gameday.ads.command("first_pitch"),
+        (MenuItem::Gameday, Char('>'), _) => guard.state.gameday.ads.command("later"),
+        (MenuItem::Gameday, Char('<'), _) => guard.state.gameday.ads.command("earlier"),
         (MenuItem::Gameday, Char('M'), _) => guard.state.gameday.ads.command("mute"),
         (MenuItem::Gameday, Char('U'), _) => guard.state.gameday.ads.command("unmute"),
         (MenuItem::Gameday, Char('i'), _) => guard.state.gameday.toggle_info(),

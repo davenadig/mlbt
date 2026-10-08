@@ -489,10 +489,10 @@ fn draw_gameday(f: &mut Frame, rect: Rect, app: &mut App) {
         status,
     );
     let help = if ads.status.message.is_empty() {
-        "A Sonos on/off   P sync first pitch   M mute   U unmute   (stops when leaving Gameday)"
+        "A Sonos on/off   > / < delay +5s / -5s   M mute   U unmute   (stops when leaving Gameday)"
             .to_string()
     } else {
-        format!("A on/off  P sync  M/U mute/unmute | {}", ads.status.message)
+        format!("A on/off  >/< delay  M/U mute/unmute | {}", ads.status.message)
     };
     f.render_widget(
         Paragraph::new(help).style(Style::default().bg(KEY_HINT_BG)),
@@ -652,7 +652,7 @@ mod tests {
                 .collect();
             assert!(lines[0].contains("Sonos ads OFF | Delay 11.2s"));
             assert!(lines[0].contains("Mute +10s / Unmute -10s"));
-            assert!(lines[1].contains("P sync first pitch"));
+            assert!(lines[1].contains("> / < delay +5s / -5s"));
             assert!(lines[1].contains("M mute   U unmute"));
         }
     }
