@@ -197,8 +197,8 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
         // Sonos ads on: the footer leads with the ad keys, since that is what the couch needs.
         MenuItem::Gameday if app.state.gameday.ads.active() => &[
             ("A", "Sonos off"),
-            (">", "delay +5s"),
-            ("<", "delay -5s"),
+            (">", "delay +2s"),
+            ("<", "delay -2s"),
             ("M/U", "mute/unmute"),
             ("←/→", "pitch"),
             ("l", "live"),
@@ -502,7 +502,7 @@ fn draw_gameday(f: &mut Frame, rect: Rect, app: &mut App) {
         status,
     );
     let help = if ads.status.message.is_empty() {
-        "A Sonos on/off   > delay +5s   < delay -5s   M mute   U unmute   (stops when leaving Gameday)"
+        "A Sonos on/off   > delay +2s   < delay -2s   M mute   U unmute   (stops when leaving Gameday)"
             .to_string()
     } else {
         format!("A on/off  >/< delay  M/U mute/unmute | {}", ads.status.message)
@@ -665,8 +665,8 @@ mod tests {
                 .collect();
             assert!(lines[0].contains("Sonos ads OFF | Delay 11.2s"));
             assert!(lines[0].contains("Mute +10s / Unmute -10s"));
-            assert!(lines[1].contains("> delay +5s"));
-            assert!(lines[1].contains("< delay -5s"));
+            assert!(lines[1].contains("> delay +2s"));
+            assert!(lines[1].contains("< delay -2s"));
             assert!(lines[1].contains("M mute   U unmute"));
         }
     }
@@ -694,8 +694,8 @@ mod tests {
         app.state.gameday.ads.launch(cmd, 111).unwrap();
         let hints = context_key_hints(&app);
         assert_eq!(hints[0], ("A", "Sonos off"));
-        assert!(hints.contains(&(">", "delay +5s")));
-        assert!(hints.contains(&("<", "delay -5s")));
+        assert!(hints.contains(&(">", "delay +2s")));
+        assert!(hints.contains(&("<", "delay -2s")));
         assert!(hints.contains(&("M/U", "mute/unmute")));
         let width: usize = hints.iter().map(|(k, l)| k.len() + l.len() + 2).sum();
         assert!(width <= 100, "footer must fit a 100-column pane: {width}");
