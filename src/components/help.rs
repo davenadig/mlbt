@@ -38,7 +38,7 @@ const GAMEDAY_DOCS: &[&[&str; 2]; 22] = &[
     &["Gameday", "2"],
     &["Listen to team radio", "L"],
     &["Sonos ads on/off (Gameday only)", "A"],
-    &["Sonos delay +5s / -5s (mute later / earlier)", "> / <"],
+    &["Sonos delay +2s / -2s (mute later / earlier)", "> / <"],
     &["Mute Sonos now", "M"],
     &["Unmute Sonos now", "U"],
     &["Toggle game info", "i"],
