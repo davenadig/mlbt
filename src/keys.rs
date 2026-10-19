@@ -281,16 +281,17 @@ pub async fn handle_key_bindings(
                 state.ads.status.message = "Select a live game to enable Sonos ads".into();
             }
         }
-        (MenuItem::Gameday, Char('>'), _) => guard.state.gameday.ads.command("later"),
-        (MenuItem::Gameday, Char('<'), _) => guard.state.gameday.ads.command("earlier"),
-        (MenuItem::Gameday, Char('M'), _) => guard.state.gameday.ads.command("mute"),
-        (MenuItem::Gameday, Char('U'), _) => guard.state.gameday.ads.command("unmute"),
+        // Unshifted on the couch: . / , nudge (> / < still work), m / u override.
+        (MenuItem::Gameday, Char('.' | '>'), _) => guard.state.gameday.ads.command("later"),
+        (MenuItem::Gameday, Char(',' | '<'), _) => guard.state.gameday.ads.command("earlier"),
+        (MenuItem::Gameday, Char('m' | 'M'), _) => guard.state.gameday.ads.command("mute"),
+        (MenuItem::Gameday, Char('u' | 'U'), _) => guard.state.gameday.ads.command("unmute"),
         (MenuItem::Gameday, Char('i'), _) => guard.state.gameday.toggle_info(),
         (MenuItem::Gameday, Char('p'), _) => guard.state.gameday.toggle_at_bat(),
         (MenuItem::Gameday, Char('b'), _) => guard.state.gameday.toggle_boxscore(),
         (MenuItem::Gameday, Char('w'), _) => guard.state.gameday.toggle_win_probability(),
         (MenuItem::Gameday, Char('n'), _) => guard.state.gameday.toggle_pitch_tracker(),
-        (MenuItem::Gameday, Char('m'), _) => guard.state.gameday.toggle_movement(),
+        (MenuItem::Gameday, Char('v'), _) => guard.state.gameday.toggle_movement(),
         (MenuItem::Gameday, Char('J') | KeyCode::Down, KeyModifiers::SHIFT) => {
             guard.state.box_score.scroll_down()
         }

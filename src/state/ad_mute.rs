@@ -22,6 +22,9 @@ pub struct AdStatus {
     pub next_action: Option<String>,
     #[serde(default)]
     pub next_action_at: Option<f64>,
+    /// True while M/U overrides the schedule (until the next API event).
+    #[serde(default)]
+    pub manual: bool,
     #[serde(default)]
     pub message: String,
 }
@@ -225,10 +228,9 @@ impl AdMuteState {
     }
 
     fn label_at(&self, now: f64) -> String {
+        // Running: the phase segment below carries muted/unmuted.
         let state = if !self.active() {
             "OFF"
-        } else if self.status.muted {
-            "MUTED"
         } else if self.status.state == "starting" {
             "STARTING"
         } else {
@@ -258,7 +260,13 @@ impl AdMuteState {
                         format!(" | {verb} in {:.0}s", (at - now).ceil())
                     }
                 }
-                _ => String::new(),
+                // Nothing scheduled: say which feed event the next change waits on.
+                _ => match (self.status.manual, self.status.muted) {
+                    (true, true) => " | Muted: manual until next play".into(),
+                    (true, false) => " | Unmuted: manual until next play".into(),
+                    (false, true) => " | Muted: waiting for first pitch".into(),
+                    (false, false) => " | Unmuted: waiting for next break".into(),
+                },
             }
         } else {
             String::new()
@@ -338,6 +346,14 @@ mod tests {
         state.status.next_action = None;
         state.status.next_action_at = None;
         assert!(!state.label_at(1090.0).contains("Unmuting"));
+        assert!(state.label_at(1090.0).contains("Muted: waiting for first pitch"));
+        state.status.muted = false;
+        assert!(state.label_at(1090.0).contains("Unmuted: waiting for next break"));
+        state.status.manual = true;
+        assert!(state.label_at(1090.0).contains("Unmuted: manual until next play"));
+        state.status.muted = true;
+        assert!(state.label_at(1090.0).contains("Muted: manual until next play"));
+        state.status.manual = false;
         state.status.next_action = Some("unmute".into());
         state.status.next_action_at = Some(1100.0);
         state.stop();

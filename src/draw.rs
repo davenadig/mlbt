@@ -197,9 +197,9 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
         // Sonos ads on: the footer leads with the ad keys, since that is what the couch needs.
         MenuItem::Gameday if app.state.gameday.ads.active() => &[
             ("A", "Sonos off"),
-            (">", "delay +2s"),
-            ("<", "delay -2s"),
-            ("M/U", "mute/unmute"),
+            (".", "delay +2s"),
+            (",", "delay -2s"),
+            ("m/u", "mute/unmute"),
             ("←/→", "pitch"),
             ("l", "live"),
             ("s", "start"),
@@ -218,7 +218,7 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("b", "box"),
             ("w", "win%"),
             ("n", "pitches"),
-            ("m", "spin"),
+            ("v", "spin"),
             ("!", "scoring"),
             ("a/h", "lineup"),
             ("c", "card"),
@@ -502,10 +502,10 @@ fn draw_gameday(f: &mut Frame, rect: Rect, app: &mut App) {
         status,
     );
     let help = if ads.status.message.is_empty() {
-        "A Sonos on/off   > delay +2s   < delay -2s   M mute   U unmute   (stops when leaving Gameday)"
+        "A Sonos on/off   . delay +2s   , delay -2s   m mute   u unmute   (stops when leaving Gameday)"
             .to_string()
     } else {
-        format!("A on/off  >/< delay  M/U mute/unmute | {}", ads.status.message)
+        format!("A on/off  ./, delay  m/u mute/unmute | {}", ads.status.message)
     };
     f.render_widget(
         Paragraph::new(help).style(Style::default().bg(KEY_HINT_BG)),
@@ -665,9 +665,9 @@ mod tests {
                 .collect();
             assert!(lines[0].contains("Sonos ads OFF | Delay 11.2s"));
             assert!(lines[0].contains("Mute +10s / Unmute -10s"));
-            assert!(lines[1].contains("> delay +2s"));
-            assert!(lines[1].contains("< delay -2s"));
-            assert!(lines[1].contains("M mute   U unmute"));
+            assert!(lines[1].contains(". delay +2s"));
+            assert!(lines[1].contains(", delay -2s"));
+            assert!(lines[1].contains("m mute   u unmute"));
         }
     }
 
@@ -685,7 +685,7 @@ mod tests {
         let mut app = App::new();
         app.state.active_tab = MenuItem::Gameday;
         assert!(context_key_hints(&app).contains(&("A", "Sonos")));
-        assert!(!context_key_hints(&app).iter().any(|(k, _)| *k == ">"));
+        assert!(!context_key_hints(&app).iter().any(|(k, _)| *k == "."));
         let mut cmd = std::process::Command::new("python3");
         cmd.args(["-c", "import sys\nfor _ in sys.stdin: pass"])
             .stdin(std::process::Stdio::piped())
@@ -694,9 +694,9 @@ mod tests {
         app.state.gameday.ads.launch(cmd, 111).unwrap();
         let hints = context_key_hints(&app);
         assert_eq!(hints[0], ("A", "Sonos off"));
-        assert!(hints.contains(&(">", "delay +2s")));
-        assert!(hints.contains(&("<", "delay -2s")));
-        assert!(hints.contains(&("M/U", "mute/unmute")));
+        assert!(hints.contains(&(".", "delay +2s")));
+        assert!(hints.contains(&(",", "delay -2s")));
+        assert!(hints.contains(&("m/u", "mute/unmute")));
         let width: usize = hints.iter().map(|(k, l)| k.len() + l.len() + 2).sum();
         assert!(width <= 100, "footer must fit a 100-column pane: {width}");
     }
