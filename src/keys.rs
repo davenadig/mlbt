@@ -482,7 +482,9 @@ fn launch_scorecard(game_id: u64) {
 }
 
 async fn load_team(guard: AppGuard<'_>, network_requests: &mpsc::Sender<RefreshableRequest>) {
-    let team_id = guard.state.standings.get_selected();
+    let Some(team_id) = guard.state.standings.get_selected() else {
+        return;
+    };
     let date = guard.state.standings.date_selector.date;
     drop(guard);
 

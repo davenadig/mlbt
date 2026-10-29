@@ -1,41 +1,6 @@
-use crate::components::constants::{DIVISION_ORDERS, DIVISIONS, lookup_team, lookup_team_by_id};
-use crate::components::date_selector::DateSelector;
-use crate::state::team_page::TeamPageState;
-use crate::ui::styling::TEXT_COLOR;
-use crate::ui::styling::win_pct_color;
-use chrono::NaiveDate;
-use chrono_tz::Tz;
-use mlbt_api::player::PeopleResponse;
-use mlbt_api::schedule::ScheduleResponse;
-use mlbt_api::season::GameType;
-use mlbt_api::standings::{RecordElement, StandingsResponse, TeamRecord};
-use mlbt_api::team::{RosterResponse, RosterType, TransactionsResponse};
-use std::collections::HashSet;
+use crate::components::constants::{DIVISION_ORDERS, DIVISIONS, lookup_team};
+use mlbt_api::standings::{ClinchIndicator, RecordElement, StandingsResponse, TeamRecord};
 use std::string::ToString;
-use std::sync::Arc;
-use tui::prelude::{Color, Stylize};
-use tui::widgets::{Cell, TableState};
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ViewMode {
-    ByDivision,
-    Overall,
-}
-
-/// Stores the state for rendering the standings. The `standings` field is a nested Vec to make
-/// displaying by division easier.
-pub struct StandingsState {
-    pub state: TableState,
-    pub favorite_team: Option<Team>,
-    pub standings: Vec<Division>,
-    pub league_standings: Vec<Standing>,
-    pub team_ids: Vec<u16>,
-    pub date_selector: DateSelector,
-    pub view_mode: ViewMode,
-    /// Used to skip selecting division names in the table.
-    division_row_indices: HashSet<usize>,
-    pub team_page: Option<TeamPageState>,
-}
 
 /// Groups teams into their divisions.
 pub struct Division {
@@ -54,6 +19,43 @@ pub struct Team {
     pub team_name: &'static str,
     /// All caps abbreviation, e.g. "CHC"
     pub abbreviation: &'static str,
+}
+
+/// A team's position in the postseason race. The API sends the numbers as strings carrying `-`
+/// and `E` sentinels, which become `None` plus the two flags here.
+#[derive(Debug, Default, Clone)]
+pub struct ClinchStatus {
+    pub indicator: Option<ClinchIndicator>,
+    /// The division elimination number, only set for teams not leading their division.
+    pub elimination_number: Option<u8>,
+    /// The wild card elimination number.
+    pub wild_card_elimination_number: Option<u8>,
+    /// Out of the division race.
+    pub division_eliminated: bool,
+    /// Out of the wild card race.
+    pub wild_card_eliminated: bool,
+}
+
+/// Standing information per team.
+#[derive(Debug, Default, Clone)]
+pub struct Standing {
+    pub team: Team,
+    pub wins: u8,
+    pub losses: u8,
+    pub winning_percentage: String,
+    pub games_back: String,
+    pub wild_card_games_back: String,
+    /// The API only ranks teams in the wild card race, so division leaders are `None`.
+    pub wild_card_rank: Option<u8>,
+    pub last_10: String,
+    pub streak: String,
+    pub runs_scored: u16,
+    pub runs_allowed: u16,
+    pub run_differential: i16,
+    pub xwl: String,
+    pub home: String,
+    pub away: String,
+    pub clinch: ClinchStatus,
 }
 
 impl Default for Team {
@@ -95,304 +97,9 @@ impl Team {
     }
 }
 
-/// Standing information per team.
-#[derive(Debug, Default, Clone)]
-pub struct Standing {
-    pub team: Team,
-    pub wins: u8,
-    pub losses: u8,
-    pub winning_percentage: String,
-    pub games_back: String,
-    pub wild_card_games_back: String,
-    pub last_10: String,
-    pub streak: String,
-    pub runs_scored: u16,
-    pub runs_allowed: u16,
-    pub run_differential: i16,
-    pub xwl: String,
-    pub home: String,
-    pub away: String,
-}
-
-impl Default for StandingsState {
-    fn default() -> Self {
-        Self {
-            state: TableState::default(),
-            standings: Division::create_divisions(),
-            league_standings: vec![],
-            team_ids: vec![200, 201, 202, 203, 204, 205],
-            date_selector: DateSelector::default(),
-            view_mode: ViewMode::ByDivision,
-            division_row_indices: HashSet::new(),
-            favorite_team: None,
-            team_page: None,
-        }
-    }
-}
-
-impl StandingsState {
-    /// Update the data from the API.
-    pub fn update(&mut self, standings: &StandingsResponse) {
-        self.standings = Division::create_table(standings, self.favorite_team);
-        self.league_standings = self.get_teams_by_record();
-        self.team_ids = self.generate_ids();
-
-        if self.standings.is_empty() {
-            self.state.select(None);
-        } else {
-            self.reset_selection();
-        }
-    }
-
-    pub fn reset_selection(&mut self) {
-        if let Some(team) = self.favorite_team {
-            self.select_favorite_team(team)
-        } else if !self.team_ids.is_empty() {
-            let offset = match self.view_mode {
-                ViewMode::ByDivision => 1, // Skip first division header
-                ViewMode::Overall => 0,    // No division headers to skip
-            };
-            self.state.select(Some(offset));
-        }
-    }
-
-    /// Reapply the favorite team ordering/highlight to already loaded standings data.
-    pub fn apply_favorite_team(&mut self, favorite_team: Option<Team>) {
-        self.favorite_team = favorite_team;
-
-        if !self
-            .standings
-            .iter()
-            .any(|division| !division.standings.is_empty())
-        {
-            return;
-        }
-
-        Division::sort_by_favorite(&mut self.standings, favorite_team);
-        self.league_standings = self.get_teams_by_record();
-        self.team_ids = self.generate_ids();
-        self.reset_selection();
-    }
-
-    /// Set the date from the validated input string from the date picker.
-    pub fn set_date_from_valid_input(&mut self, date: NaiveDate) {
-        self.date_selector.set_date_from_valid_input(date);
-    }
-
-    /// Set the date using Left/Right arrow keys to move a single day at a time.
-    pub fn set_date_with_arrows(&mut self, forward: bool) -> NaiveDate {
-        self.date_selector.set_date_with_arrows(forward)
-    }
-
-    /// Toggle between division view and overall view
-    pub fn toggle_view_mode(&mut self) {
-        self.view_mode = match self.view_mode {
-            ViewMode::ByDivision => ViewMode::Overall,
-            ViewMode::Overall => ViewMode::ByDivision,
-        };
-        self.team_ids = self.generate_ids();
-        self.reset_selection();
-    }
-
-    /// Get all teams sorted by record (for overall view)
-    fn get_teams_by_record(&self) -> Vec<Standing> {
-        let mut teams: Vec<Standing> = self
-            .standings
-            .iter()
-            .flat_map(|division| division.standings.iter())
-            .cloned()
-            .collect();
-
-        teams.sort_by(|a, b| {
-            // Sort by wins descending, then losses ascending
-            b.wins.cmp(&a.wins).then(a.losses.cmp(&b.losses))
-        });
-
-        teams
-    }
-
-    fn generate_ids(&mut self) -> Vec<u16> {
-        self.division_row_indices.clear(); // clear previous indices in case they change, e.g. historical standings
-
-        match self.view_mode {
-            ViewMode::ByDivision => {
-                let mut ids = Vec::with_capacity(36); // 30 teams, 6 divisions
-                let mut count = 0;
-                for division in &self.standings {
-                    ids.push(division.id);
-                    self.division_row_indices.insert(count);
-                    for team in &division.standings {
-                        ids.push(team.team.id);
-                    }
-                    count += 1 + division.standings.len();
-                }
-                ids
-            }
-            ViewMode::Overall => {
-                // For overall view, just collect team IDs without divisions
-                self.league_standings
-                    .iter()
-                    .map(|standing| standing.team.id)
-                    .collect()
-            }
-        }
-    }
-
-    fn select_favorite_team(&mut self, team: Team) {
-        let idx = match self.view_mode {
-            ViewMode::ByDivision => {
-                // Find team position including division headers
-                let mut current_idx = 0;
-                for division in &self.standings {
-                    current_idx += 1; // Skip division header
-                    for standing in &division.standings {
-                        if standing.team.id == team.id {
-                            self.state.select(Some(current_idx));
-                            return;
-                        }
-                        current_idx += 1;
-                    }
-                }
-                None
-            }
-            ViewMode::Overall => {
-                // Find team position in sorted list
-                self.league_standings
-                    .iter()
-                    .position(|standing| standing.team.id == team.id)
-            }
-        };
-
-        self.state.select(idx);
-    }
-
-    pub fn has_team_page(&self) -> bool {
-        self.team_page.is_some()
-    }
-
-    /// Close the top layer overlay. If the overlay is a player profile, close it. Otherwise,
-    /// close the team page.
-    pub fn close_overlay(&mut self) {
-        if let Some(tp) = &mut self.team_page {
-            if tp.player_profile.is_some() {
-                tp.player_profile = None;
-            } else {
-                self.team_page = None;
-            }
-        }
-    }
-
-    pub fn update_team_page(
-        &mut self,
-        team_id: u16,
-        date: NaiveDate,
-        schedule: &ScheduleResponse,
-        roster: &RosterResponse,
-        transactions: &TransactionsResponse,
-        tz: Tz,
-    ) {
-        let team = lookup_team_by_id(team_id).unwrap_or_default();
-        self.team_page = Some(TeamPageState::from_response(
-            team,
-            date,
-            schedule,
-            roster,
-            transactions,
-            tz,
-        ));
-    }
-
-    pub fn update_team_roster(
-        &mut self,
-        team_id: u16,
-        roster: &RosterResponse,
-        roster_type: RosterType,
-    ) {
-        if let Some(tp) = &mut self.team_page
-            && tp.team.id == team_id
-        {
-            tp.update_roster(roster, roster_type);
-        }
-    }
-
-    pub fn update_team_player_profile(&mut self, data: Arc<PeopleResponse>, game_type: GameType) {
-        if let Some(tp) = &mut self.team_page {
-            tp.update_player_profile(data, game_type);
-        }
-    }
-
-    pub fn get_selected(&self) -> u16 {
-        let selected = self.state.selected().unwrap_or(0);
-        if let Some(s) = self.team_ids.get(selected) {
-            *s
-        } else {
-            0
-        }
-    }
-
-    fn skip_division(&self, index: usize) -> bool {
-        // Only skip division rows in division view mode
-        self.view_mode == ViewMode::ByDivision && self.division_row_indices.contains(&index)
-    }
-
-    fn move_forward(&self, current: usize) -> usize {
-        let len = self.team_ids.len();
-        if current >= len - 1 { 0 } else { current + 1 }
-    }
-
-    fn move_backward(&self, current: usize) -> usize {
-        let len = self.team_ids.len();
-        if current == 0 { len - 1 } else { current - 1 }
-    }
-
-    pub fn next(&mut self) {
-        let len = self.team_ids.len();
-        if len == 0 {
-            return;
-        }
-
-        let start = self.state.selected().unwrap_or(0);
-        let mut i = self.move_forward(start);
-
-        if self.skip_division(i) {
-            i = self.move_forward(i);
-        }
-
-        self.state.select(Some(i));
-
-        // Reset offset when wrapping to beginning
-        if i < start {
-            self.state = TableState::default();
-            self.state.select(Some(i));
-        }
-    }
-
-    pub fn previous(&mut self) {
-        let len = self.team_ids.len();
-        if len == 0 {
-            return;
-        }
-
-        let start = self.state.selected().unwrap_or(0);
-        let mut i = self.move_backward(start);
-
-        if self.skip_division(i) {
-            i = self.move_backward(i);
-        }
-
-        self.state.select(Some(i));
-
-        // Reset offset when wrapping to end
-        if i > start {
-            self.state = TableState::default();
-            self.state.select(Some(i));
-        }
-    }
-}
-
 impl Division {
     /// Generate only the division names.
-    fn create_divisions() -> Vec<Division> {
+    pub fn create_divisions() -> Vec<Division> {
         (200..206)
             .map(|id| Division {
                 name: DIVISIONS[&id].to_string(),
@@ -403,7 +110,10 @@ impl Division {
     }
 
     /// Generate the standings data to be used to render a table widget.
-    fn create_table(standings: &StandingsResponse, favorite_team: Option<Team>) -> Vec<Division> {
+    pub fn create_table(
+        standings: &StandingsResponse,
+        favorite_team: Option<Team>,
+    ) -> Vec<Division> {
         let mut s: Vec<Division> = standings
             .records
             .iter()
@@ -431,7 +141,7 @@ impl Division {
         s
     }
 
-    fn sort_by_favorite(divisions: &mut [Division], favorite_team: Option<Team>) {
+    pub fn sort_by_favorite(divisions: &mut [Division], favorite_team: Option<Team>) {
         if let Some(team) = favorite_team
             && let Some(order) = DIVISION_ORDERS.get(&team.division_id)
         {
@@ -446,6 +156,46 @@ impl Division {
 
         // ensure display order is the same when there is no favorite team ordering
         divisions.sort_by_key(|a| a.id);
+    }
+}
+
+impl ClinchStatus {
+    fn parse_number(value: Option<&str>) -> Option<u8> {
+        value.and_then(|v| v.parse().ok())
+    }
+
+    fn from_team_record(team: &TeamRecord) -> Self {
+        Self::from_parts(
+            team.clinch_indicator,
+            team.elimination_number.as_deref(),
+            team.wild_card_elimination_number.as_deref(),
+        )
+    }
+
+    fn from_parts(
+        indicator: Option<ClinchIndicator>,
+        elimination: Option<&str>,
+        wild_card_elimination: Option<&str>,
+    ) -> Self {
+        Self {
+            indicator,
+            elimination_number: Self::parse_number(elimination),
+            wild_card_elimination_number: Self::parse_number(wild_card_elimination),
+            division_eliminated: elimination == Some("E"),
+            wild_card_eliminated: wild_card_elimination == Some("E"),
+        }
+    }
+
+    /// The letter shown next to a team name once it clinches. Elimination is not a marker, it
+    /// shows up as `E` in the elimination number column instead.
+    pub fn marker(&self) -> Option<char> {
+        match self.indicator? {
+            ClinchIndicator::Z => Some('z'),
+            ClinchIndicator::Y => Some('y'),
+            ClinchIndicator::X => Some('x'),
+            ClinchIndicator::W => Some('w'),
+            ClinchIndicator::Unknown => None,
+        }
     }
 }
 
@@ -481,6 +231,7 @@ impl Standing {
             winning_percentage: team.winning_percentage.clone(),
             games_back: team.games_back.clone(),
             wild_card_games_back: team.wild_card_games_back.clone(),
+            wild_card_rank: team.wild_card_rank.as_deref().and_then(|r| r.parse().ok()),
             last_10,
             streak,
             runs_scored: team.runs_scored,
@@ -489,37 +240,8 @@ impl Standing {
             xwl,
             home,
             away,
+            clinch: ClinchStatus::from_team_record(team),
         }
-    }
-
-    pub fn to_cells(&self) -> Vec<Cell<'_>> {
-        let (prefix, rdiff_color) = match self.run_differential.signum() {
-            1 => ("+", Color::Green),
-            -1 => ("", Color::Red),
-            _ => ("", TEXT_COLOR),
-        };
-        let pct_color = win_pct_color(&self.winning_percentage);
-        let streak_color = match self.streak.chars().next() {
-            Some('W') => Color::Green,
-            Some('L') => Color::Red,
-            _ => TEXT_COLOR,
-        };
-        vec![
-            self.team.name.to_string().into(),
-            self.wins.to_string().into(),
-            self.losses.to_string().into(),
-            Cell::from(self.winning_percentage.clone()).fg(pct_color),
-            self.games_back.clone().into(),
-            self.wild_card_games_back.clone().into(),
-            self.last_10.clone().into(),
-            Cell::from(self.streak.clone()).fg(streak_color),
-            self.runs_scored.to_string().into(),
-            self.runs_allowed.to_string().into(),
-            Cell::from(format!("{}{}", prefix, self.run_differential)).fg(rdiff_color),
-            self.xwl.clone().into(),
-            self.home.clone().into(),
-            self.away.clone().into(),
-        ]
     }
 }
 
@@ -527,58 +249,61 @@ impl Standing {
 mod tests {
     use super::*;
 
-    fn standing(team_id: u16, wins: u8, losses: u8) -> Standing {
-        Standing {
-            team: lookup_team_by_id(team_id).unwrap(),
-            wins,
-            losses,
-            ..Standing::default()
-        }
+    #[test]
+    fn clinch_status_reads_the_api_sentinels() {
+        // a division leader has nothing to be eliminated from, so the API sends `-`
+        let leader = ClinchStatus::from_parts(None, Some("-"), Some("-"));
+        assert_eq!(leader.elimination_number, None);
+        assert!(!leader.division_eliminated);
+
+        let chaser = ClinchStatus::from_parts(None, Some("26"), Some("30"));
+        assert_eq!(chaser.elimination_number, Some(26));
+        assert_eq!(chaser.wild_card_elimination_number, Some(30));
+
+        // `-` and `E` are sentinels, not numbers
+        let out = ClinchStatus::from_parts(None, Some("E"), Some("E"));
+        assert_eq!(out.elimination_number, None);
+        assert!(out.division_eliminated);
+        assert!(out.wild_card_eliminated);
     }
 
     #[test]
-    fn apply_favorite_team_reorders_divisions_and_selects_team() {
-        let mut state = StandingsState {
-            state: TableState::default(),
-            favorite_team: None,
-            standings: vec![
-                Division {
-                    id: 200,
-                    name: "AL West".to_string(),
-                    standings: vec![standing(108, 10, 5)],
-                },
-                Division {
-                    id: 201,
-                    name: "AL East".to_string(),
-                    standings: vec![standing(147, 11, 4)],
-                },
-                Division {
-                    id: 205,
-                    name: "NL Central".to_string(),
-                    standings: vec![standing(112, 9, 6)],
-                },
-            ],
-            league_standings: vec![],
-            team_ids: vec![],
-            date_selector: DateSelector::default(),
-            view_mode: ViewMode::ByDivision,
-            division_row_indices: HashSet::new(),
-            team_page: None,
-        };
+    fn the_two_races_are_eliminated_independently() {
+        // clinched a wild card, so out of the division race but playing in October
+        let wild_card = ClinchStatus::from_parts(Some(ClinchIndicator::W), Some("E"), Some("-"));
+        assert!(wild_card.division_eliminated);
+        assert!(!wild_card.wild_card_eliminated);
+        assert_eq!(wild_card.marker(), Some('w'));
 
-        state.apply_favorite_team(lookup_team_by_id(147));
+        // still chasing a wild card
+        let contender = ClinchStatus::from_parts(None, Some("E"), Some("5"));
+        assert!(contender.division_eliminated);
+        assert!(!contender.wild_card_eliminated);
 
-        assert_eq!(
-            state
-                .standings
-                .iter()
-                .map(|division| division.id)
-                .collect::<Vec<_>>(),
-            vec![201, 202, 200, 203, 204, 205]
-                .into_iter()
-                .filter(|id| [200, 201, 205].contains(id))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(state.get_selected(), 147);
+        // flip side: a weak division keeps them alive there while the wild card is gone.
+        let division_only = ClinchStatus::from_parts(None, Some("1"), Some("E"));
+        assert!(!division_only.division_eliminated);
+        assert!(division_only.wild_card_eliminated);
+
+        let out = ClinchStatus::from_parts(None, Some("E"), Some("E"));
+        assert!(out.division_eliminated);
+        assert!(out.wild_card_eliminated);
+        assert_eq!(out.marker(), None);
+    }
+
+    #[test]
+    fn marker_comes_from_the_clinch_indicator() {
+        let marker =
+            |indicator| ClinchStatus::from_parts(Some(indicator), Some("-"), Some("-")).marker();
+
+        assert_eq!(marker(ClinchIndicator::Z), Some('z'));
+        assert_eq!(marker(ClinchIndicator::Y), Some('y'));
+        assert_eq!(marker(ClinchIndicator::X), Some('x'));
+        assert_eq!(marker(ClinchIndicator::W), Some('w'));
+
+        assert_eq!(marker(ClinchIndicator::Unknown), None);
+
+        // still in the race
+        assert_eq!(ClinchStatus::default().marker(), None);
     }
 }

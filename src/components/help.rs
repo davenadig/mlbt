@@ -84,7 +84,7 @@ const STANDINGS_DOCS: &[&[&str; 2]; 6] = &[
     &["Move up", "k/↑"],
     &["View team", "Enter"],
     &["Select date", ":"],
-    &["Toggle division/league", "l"],
+    &["Cycle division/league/wild card", "l"],
 ];
 const TEAM_PAGE_DOCS: &[&[&str; 2]; 10] = &[
     &["Team Page", " "],
@@ -100,7 +100,7 @@ const TEAM_PAGE_DOCS: &[&[&str; 2]; 10] = &[
 ];
 const PLAYER_PROFILE_DOCS: &[&[&str; 2]; 7] = &[
     &["Player Profile", " "],
-    &[" Toggle category", "s"],
+    &[" Cycle category", "s"],
     &[" Scroll down", "j/↓"],
     &[" Scroll up", "k/↑"],
     &[" Page down", "Shift + j/↓"],

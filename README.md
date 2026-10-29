@@ -132,7 +132,7 @@ docker run -it --rm --name mlbt mlbt:latest
 
 - standings
     - sorted by favorite team
-    - division/league view
+    - division/league/wildcard view
     - selectable date
 
 - team page
@@ -286,7 +286,7 @@ Press `4` to activate this tab.
 | `k` / `↑` | move up                                                |
 | `Enter`   | view [team page](#team-page)                           |
 | `:`       | activate date picker (see [Date Picker](#date-picker)) |
-| `l`       | toggle division/league view                            |
+| `l`       | cycle division/league/wildcard view                    |
 
 ### Player Profile
 
@@ -296,7 +296,7 @@ opened from [Stats](#stats) or from a [team page](#team-page) roster by pressing
 
 | Key                 | Description          |
 |---------------------|----------------------|
-| `s`                 | toggle stat category |
+| `s`                 | cycle stat category  |
 | `j` / `↓`           | scroll down          |
 | `k` / `↑`           | scroll up            |
 | `Shift` + `j` / `↓` | page down            |
