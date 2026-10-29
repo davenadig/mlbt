@@ -266,9 +266,14 @@ pub async fn handle_key_bindings(
         (MenuItem::Standings, KeyCode::Enter, _) => load_team(guard, network_requests).await,
         (MenuItem::Standings, Char(':'), _) => guard.update_tab(MenuItem::DatePicker),
 
-        (MenuItem::Gameday, Char('A'), _) => {
+        (MenuItem::Gameday, Char(key @ ('A' | 'D')), _) => {
+            let target = if key == 'A' {
+                crate::state::ad_mute::AdTarget::Sonos
+            } else {
+                crate::state::ad_mute::AdTarget::Mac
+            };
             let state = &mut guard.state.gameday;
-            if state.ads.active() {
+            if state.ads.active() && state.ads.target == target {
                 state.ads.stop();
             } else if state.game.game_id > 0
                 && matches!(
@@ -276,9 +281,9 @@ pub async fn handle_key_bindings(
                     Some(mlbt_api::schedule::AbstractGameState::Live)
                 )
             {
-                state.ads.start(state.game.game_id);
+                state.ads.start(state.game.game_id, target);
             } else {
-                state.ads.status.message = "Select a live game to enable Sonos ads".into();
+                state.ads.status.message = "Select a live game to enable ads".into();
             }
         }
         // Unshifted on the couch: . / , nudge (> / < still work), m / u override.

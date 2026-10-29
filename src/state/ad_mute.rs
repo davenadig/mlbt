@@ -1,5 +1,5 @@
-//! Sonos ad muting belongs to one Gameday view, never a detached service.
-//! Keep the target explicit so future radio controls cannot silently mute Sonos.
+//! Ad muting belongs to one Gameday view, never a detached service.
+//! Keep the target explicit (Sonos or this Mac) so radio controls cannot silently mute either.
 use serde::Deserialize;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -80,15 +80,37 @@ impl Session {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum AdTarget {
+    #[default]
+    Sonos,
+    /// System output mute on this Mac (MLB.tv in the browser).
+    Mac,
+}
+
+impl AdTarget {
+    pub fn name(self) -> &'static str {
+        match self {
+            AdTarget::Sonos => "Sonos",
+            AdTarget::Mac => "Mac",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct AdMuteState {
     session: Option<Session>,
     pub status: AdStatus,
+    pub target: AdTarget,
 }
 
-pub fn helper_command(home: &Path, game_id: u64) -> Command {
+pub fn helper_command(home: &Path, game_id: u64, target: AdTarget) -> Command {
     let mut command = Command::new(home.join("GitHub/cogspace/tools/bin/cog-audiomute"));
-    command.args(["tv", "--managed", "--game-pk", &game_id.to_string()]);
+    let game = game_id.to_string();
+    match target {
+        AdTarget::Sonos => command.args(["tv", "--managed", "--game-pk", &game]),
+        AdTarget::Mac => command.args(["mac", "--managed", "--source", "browser", "--game-pk", &game]),
+    };
     command.stdin(Stdio::piped()).stdout(Stdio::piped());
     command
 }
@@ -98,11 +120,15 @@ impl AdMuteState {
         self.session.is_some()
     }
 
-    pub fn start(&mut self, game_id: u64) {
+    pub fn start(&mut self, game_id: u64, target: AdTarget) {
         if self.active() {
+            let same = self.target == target;
             self.stop();
-            return;
+            if same {
+                return;
+            }
         }
+        self.target = target;
         let Some(home) = std::env::var_os("HOME") else {
             self.status.message = "Cannot find Cogspace: HOME is unset".into();
             return;
@@ -111,12 +137,12 @@ impl AdMuteState {
         let log_dir = home.join(".cache/cogspace/baseball/logs");
         let result = std::fs::create_dir_all(&log_dir).and_then(|()| {
             let log = std::fs::File::create(log_dir.join("mlbt-audiomute.log"))?;
-            let mut command = helper_command(home, game_id);
+            let mut command = helper_command(home, game_id, target);
             command.stderr(Stdio::from(log));
             self.launch(command, game_id)
         });
         if let Err(err) = result {
-            self.status.message = format!("Cannot start Sonos ads: {err}");
+            self.status.message = format!("Cannot start {} ads: {err}", target.name());
         }
     }
 
@@ -154,10 +180,10 @@ impl AdMuteState {
         if let Some(session) = &mut self.session {
             if session.send(command).is_err() {
                 self.stop();
-                self.status.message = "Sonos helper disconnected; stopped".into();
+                self.status.message = format!("{} helper disconnected; stopped", self.target.name());
             }
         } else {
-            self.status.message = "Press A to enable Sonos ads first".into();
+            self.status.message = "Press A (Sonos) or D (this Mac) to enable ads first".into();
         }
     }
 
@@ -185,21 +211,22 @@ impl AdMuteState {
                 self.status = status;
             }
             if !exit.success() {
-                self.status.message =
-                    "Sonos helper failed; check mlbt-audiomute.log (quit any standalone muter)"
-                        .into();
+                self.status.message = format!(
+                    "{} helper failed; check mlbt-audiomute.log (quit any standalone muter)",
+                    self.target.name()
+                );
             }
             self.status.state = "stopped".into();
             return;
         }
         if session.last_update.elapsed() > Duration::from_secs(10) {
             self.stop();
-            self.status.message = "Sonos helper stopped responding; stopped".into();
+            self.status.message = format!("{} helper stopped responding; stopped", self.target.name());
             return;
         }
         if session.send("heartbeat").is_err() {
             self.stop();
-            self.status.message = "Sonos helper disconnected; stopped".into();
+            self.status.message = format!("{} helper disconnected; stopped", self.target.name());
         }
     }
 
@@ -210,8 +237,10 @@ impl AdMuteState {
                 self.status = status;
             }
             if !clean || self.status.muted {
-                self.status.message =
-                    "Helper stopped; Sonos unmute unconfirmed—check soundbar".into();
+                self.status.message = match self.target {
+                    AdTarget::Sonos => "Helper stopped; Sonos unmute unconfirmed—check soundbar".into(),
+                    AdTarget::Mac => "Helper stopped; Mac unmute unconfirmed—check volume".into(),
+                };
             } else {
                 self.status.message.clear();
             }
@@ -272,7 +301,8 @@ impl AdMuteState {
             String::new()
         };
         format!(
-            "Sonos ads {state}{countdown} | Delay {lag} | Mute +{} / Unmute -{}",
+            "{} ads {state}{countdown} | Delay {lag} | Mute +{} / Unmute -{}",
+            self.target.name(),
             margin(self.status.mute_margin),
             margin(self.status.unmute_margin)
         )
@@ -291,10 +321,15 @@ mod tests {
 
     #[test]
     fn helper_targets_selected_game_and_reuses_saved_sync() {
-        let cmd = helper_command(Path::new("/Users/test"), 824787);
+        let cmd = helper_command(Path::new("/Users/test"), 824787, AdTarget::Sonos);
         assert_eq!(
             cmd.get_args().collect::<Vec<_>>(),
             ["tv", "--managed", "--game-pk", "824787"]
+        );
+        let cmd = helper_command(Path::new("/Users/test"), 824787, AdTarget::Mac);
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            ["mac", "--managed", "--source", "browser", "--game-pk", "824787"]
         );
     }
 

@@ -194,9 +194,9 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
             ("x", "stop"),
             ("Esc", "close"),
         ],
-        // Sonos ads on: the footer leads with the ad keys, since that is what the couch needs.
+        // Ads on: the footer leads with the ad keys, since that is what the couch needs.
         MenuItem::Gameday if app.state.gameday.ads.active() => &[
-            ("A", "Sonos off"),
+            ("A/D", "ads off"),
             (".", "delay +2s"),
             (",", "delay -2s"),
             ("m/u", "mute/unmute"),
@@ -208,6 +208,7 @@ fn context_key_hints(app: &App) -> &'static [KeyHint] {
         ],
         MenuItem::Gameday => &[
             ("A", "Sonos"),
+            ("D", "Mac mute"),
             ("L", "Listen"),
             ("←/→", "pitch"),
             ("J/K", "box"),
@@ -502,10 +503,10 @@ fn draw_gameday(f: &mut Frame, rect: Rect, app: &mut App) {
         status,
     );
     let help = if ads.status.message.is_empty() {
-        "A Sonos on/off   . delay +2s   , delay -2s   m mute   u unmute   (stops when leaving Gameday)"
+        "A Sonos / D Mac on/off   . delay +2s   , delay -2s   m mute   u unmute   (stops when leaving Gameday)"
             .to_string()
     } else {
-        format!("A on/off  ./, delay  m/u mute/unmute | {}", ads.status.message)
+        format!("A/D on/off  ./, delay  m/u mute/unmute | {}", ads.status.message)
     };
     f.render_widget(
         Paragraph::new(help).style(Style::default().bg(KEY_HINT_BG)),
@@ -693,7 +694,7 @@ mod tests {
             .stderr(std::process::Stdio::null());
         app.state.gameday.ads.launch(cmd, 111).unwrap();
         let hints = context_key_hints(&app);
-        assert_eq!(hints[0], ("A", "Sonos off"));
+        assert_eq!(hints[0], ("A/D", "ads off"));
         assert!(hints.contains(&(".", "delay +2s")));
         assert!(hints.contains(&(",", "delay -2s")));
         assert!(hints.contains(&("m/u", "mute/unmute")));
